@@ -10,12 +10,14 @@ if 'refresh_data' not in st.session_state:
     st.session_state.refresh_data = False
 
 # Função para carregar dados sem cache agressivo
-def load_csv_data(file_path):
+def load_csv_data(file_path, default_columns=None):
     try:
         return pd.read_csv(file_path)
     except FileNotFoundError:
         # Retornar DataFrame vazio se arquivo não existir
-        if 'horas' in file_path:
+        if default_columns:
+            return pd.DataFrame(columns=default_columns)
+        elif 'horas' in file_path:
             return pd.DataFrame(columns=['Data', 'Horas', 'Cotacao', 'Semana', 'Nota', 'Valor_USD', 'Valor_BRL', 'Valor_Ajustado_USD', 'Valor_Ajustado_BRL', 'Pago'])
         elif 'familia' in file_path:
             return pd.DataFrame(columns=['Membro', 'Tipo', 'Valor', 'Data'])
@@ -24,7 +26,7 @@ def load_csv_data(file_path):
         elif 'investimentos' in file_path:
             return pd.DataFrame(columns=['Membro', 'Tipo', 'Valor', 'Data', 'Rendimento'])
         elif 'emprestimos' in file_path:
-            return pd.DataFrame(columns=['Tipo', 'Pessoa', 'Valor', 'Data_Emprestimo', 'Data_Vencimento', 'Status', 'Observacoes'])
+            return pd.DataFrame(columns=['Nome', 'Tipo', 'Valor_Original', 'Valor_Com_Juros', 'Parcelas_Total', 'Parcelas_Pagas', 'Valor_Parcela', 'Data_Emprestimo', 'Status', 'Observacoes'])
     except Exception:
         return pd.DataFrame()
 
@@ -786,14 +788,42 @@ with abas[3]:
 with abas[4]:
     st.header("💳 Controle de Empréstimos")
     
-    df_emprestimos = load_csv_data(emprestimos_path)
+    df_emprestimos = load_csv_data(emprestimos_path, ['Nome', 'Tipo', 'Valor_Original', 'Valor_Com_Juros', 'Parcelas_Total', 'Parcelas_Pagas', 'Valor_Parcela', 'Data_Emprestimo', 'Status', 'Observacoes'])
+    
+    # Função auxiliar para integrar com renda familiar
+    def registrar_emprestimo_na_renda(nome, valor, tipo_transacao, data):
+        """Registra empréstimo recebido na renda ou parcela paga como despesa"""
+        renda_path = 'data/familia.csv'
+        df_familia = load_csv_data(renda_path, ['Membro', 'Tipo', 'Valor', 'Data'])
+        
+        novo_registro = pd.DataFrame({
+            'Membro': [nome],
+            'Tipo': [tipo_transacao],
+            'Valor': [valor],
+            'Data': [data]
+        })
+        
+        df_familia = pd.concat([df_familia, novo_registro], ignore_index=True)
+        save_csv_data(df_familia, renda_path, f"✅ {tipo_transacao} registrado na renda familiar!")
     
     # Métricas gerais
     if not df_emprestimos.empty:
-        emprestimos_feitos = df_emprestimos[df_emprestimos['Tipo'] == 'Emprestado']['Valor'].sum()
-        emprestimos_recebidos = df_emprestimos[df_emprestimos['Tipo'] == 'Recebido']['Valor'].sum()
-        pendentes_receber = df_emprestimos[(df_emprestimos['Tipo'] == 'Emprestado') & (df_emprestimos['Status'] == 'Pendente')]['Valor'].sum()
-        pendentes_pagar = df_emprestimos[(df_emprestimos['Tipo'] == 'Recebido') & (df_emprestimos['Status'] == 'Pendente')]['Valor'].sum()
+        # Calcular valores
+        emprestimos_feitos = df_emprestimos[df_emprestimos['Tipo'] == 'Emprestado']['Valor_Com_Juros'].sum()
+        emprestimos_recebidos = df_emprestimos[df_emprestimos['Tipo'] == 'Recebido']['Valor_Original'].sum()
+        
+        # Valores pendentes
+        pendentes_receber = 0
+        pendentes_pagar = 0
+        
+        for _, row in df_emprestimos.iterrows():
+            parcelas_restantes = row['Parcelas_Total'] - row['Parcelas_Pagas']
+            valor_restante = parcelas_restantes * row['Valor_Parcela']
+            
+            if row['Tipo'] == 'Emprestado' and row['Status'] == 'Ativo':
+                pendentes_receber += valor_restante
+            elif row['Tipo'] == 'Recebido' and row['Status'] == 'Ativo':
+                pendentes_pagar += valor_restante
         
         col1, col2, col3, col4 = st.columns(4)
         with col1:
@@ -806,145 +836,221 @@ with abas[4]:
             st.metric("📋 A Pagar", f"R$ {pendentes_pagar:,.2f}")
         
         # Saldo líquido
-        saldo_liquido = emprestimos_feitos - emprestimos_recebidos
+        saldo_liquido = pendentes_receber - pendentes_pagar
         if saldo_liquido > 0:
-            st.metric("📊 Saldo Líquido", f"R$ {saldo_liquido:,.2f}", delta="Você emprestou mais")
+            st.metric("📊 Saldo Líquido", f"R$ {saldo_liquido:,.2f}", delta="Saldo positivo")
         elif saldo_liquido < 0:
-            st.metric("📊 Saldo Líquido", f"R$ {abs(saldo_liquido):,.2f}", delta="Você deve mais")
+            st.metric("📊 Saldo Líquido", f"R$ {abs(saldo_liquido):,.2f}", delta="Saldo negativo")
         else:
             st.metric("📊 Saldo Líquido", "R$ 0,00", delta="Equilibrado")
     
-    # Filtros
-    st.subheader("🔍 Filtros")
-    col_f1, col_f2, col_f3 = st.columns(3)
-    
-    with col_f1:
-        tipos_filtro = st.multiselect("Tipo:", ["Emprestado", "Recebido"], key="filtro_tipo_emp")
-    with col_f2:
-        status_filtro = st.multiselect("Status:", ["Pendente", "Quitado"], key="filtro_status_emp")
-    with col_f3:
-        if not df_emprestimos.empty:
-            pessoas_filtro = st.multiselect("Pessoa:", df_emprestimos['Pessoa'].unique(), key="filtro_pessoa_emp")
-        else:
-            pessoas_filtro = []
-    
-    # Aplicar filtros
-    df_filtrado_emp = df_emprestimos.copy()
-    if tipos_filtro:
-        df_filtrado_emp = df_filtrado_emp[df_filtrado_emp['Tipo'].isin(tipos_filtro)]
-    if status_filtro:
-        df_filtrado_emp = df_filtrado_emp[df_filtrado_emp['Status'].isin(status_filtro)]
-    if pessoas_filtro:
-        df_filtrado_emp = df_filtrado_emp[df_filtrado_emp['Pessoa'].isin(pessoas_filtro)]
-    
-    # Exibir dados filtrados
-    if not df_filtrado_emp.empty:
+    # Exibir dados dos empréstimos
+    if not df_emprestimos.empty:
         st.subheader("📋 Registros de Empréstimos")
+        
+        # Criar dados para exibição
+        df_display = df_emprestimos.copy()
+        df_display['Data_Emprestimo'] = pd.to_datetime(df_display['Data_Emprestimo']).dt.strftime('%d/%m/%Y')
+        df_display['Parcelas_Restantes'] = df_display['Parcelas_Total'] - df_display['Parcelas_Pagas']
+        df_display['Valor_Restante'] = df_display['Parcelas_Restantes'] * df_display['Valor_Parcela']
+        df_display['Progresso'] = (df_display['Parcelas_Pagas'] / df_display['Parcelas_Total'] * 100).round(1)
         
         # Função para destacar por status
         def highlight_status_emp(row):
-            if row['Status'] == 'Pendente':
+            if row['Status'] == 'Ativo':
                 return ['background-color: #FFA726; color: #000000;' for _ in row]
             elif row['Status'] == 'Quitado':
                 return ['background-color: #1DE9B6; color: #181C2F;' for _ in row]
             return ['' for _ in row]
         
-        df_display = df_filtrado_emp.copy()
-        df_display['Data_Emprestimo'] = pd.to_datetime(df_display['Data_Emprestimo']).dt.strftime('%d/%m/%Y')
-        df_display['Data_Vencimento'] = pd.to_datetime(df_display['Data_Vencimento']).dt.strftime('%d/%m/%Y')
+        # Selecionar colunas para exibir
+        colunas_exibir = ['Nome', 'Tipo', 'Valor_Original', 'Valor_Com_Juros', 'Valor_Parcela', 
+                         'Parcelas_Pagas', 'Parcelas_Total', 'Parcelas_Restantes', 'Valor_Restante', 
+                         'Progresso', 'Status', 'Data_Emprestimo']
         
-        st.dataframe(df_display.style.apply(highlight_status_emp, axis=1).format({
-            'Valor': 'R$ {:.2f}'
-        }))
+        df_show = df_display[colunas_exibir]
+        
+        st.dataframe(df_show.style.apply(highlight_status_emp, axis=1).format({
+            'Valor_Original': 'R$ {:.2f}',
+            'Valor_Com_Juros': 'R$ {:.2f}',
+            'Valor_Parcela': 'R$ {:.2f}',
+            'Valor_Restante': 'R$ {:.2f}',
+            'Progresso': '{:.1f}%'
+        }), use_container_width=True)
+        
+        # Gráficos de acompanhamento
+        col_g1, col_g2 = st.columns(2)
+        
+        with col_g1:
+            # Gráfico de progresso dos empréstimos
+            if not df_emprestimos.empty:
+                fig_progresso = px.bar(
+                    df_display, 
+                    x='Nome', 
+                    y=['Parcelas_Pagas', 'Parcelas_Restantes'],
+                    title='Progresso dos Empréstimos',
+                    labels={'value': 'Parcelas', 'variable': 'Status'},
+                    color_discrete_map={'Parcelas_Pagas': '#1DE9B6', 'Parcelas_Restantes': '#FFA726'}
+                )
+                st.plotly_chart(fig_progresso, use_container_width=True)
+        
+        with col_g2:
+            # Gráfico de valores por tipo
+            if not df_emprestimos.empty:
+                resumo_tipo = df_emprestimos.groupby('Tipo').agg({
+                    'Valor_Original': 'sum',
+                    'Valor_Com_Juros': 'sum'
+                }).reset_index()
+                
+                fig_valores = px.bar(
+                    resumo_tipo, 
+                    x='Tipo', 
+                    y=['Valor_Original', 'Valor_Com_Juros'],
+                    title='Valores por Tipo',
+                    labels={'value': 'Valor (R$)', 'variable': 'Tipo de Valor'},
+                    color_discrete_map={'Valor_Original': '#2196F3', 'Valor_Com_Juros': '#FF5722'}
+                )
+                st.plotly_chart(fig_valores, use_container_width=True)
         
         # Gráficos
         col_g1, col_g2 = st.columns(2)
         
-        with col_g1:
-            # Gráfico por tipo
-            resumo_tipo = df_filtrado_emp.groupby('Tipo')['Valor'].sum().reset_index()
-            if not resumo_tipo.empty:
-                fig_tipo = px.pie(resumo_tipo, names='Tipo', values='Valor', 
-                                 title='Distribuição por Tipo de Empréstimo')
-                st.plotly_chart(fig_tipo, use_container_width=True)
-        
-        with col_g2:
-            # Gráfico por status
-            resumo_status = df_filtrado_emp.groupby('Status')['Valor'].sum().reset_index()
-            if not resumo_status.empty:
-                fig_status = px.pie(resumo_status, names='Status', values='Valor', 
-                                   title='Distribuição por Status',
-                                   color_discrete_map={'Pendente': '#FFA726', 'Quitado': '#1DE9B6'})
-                st.plotly_chart(fig_status, use_container_width=True)
     
     # Formulário para adicionar empréstimo
     st.subheader("➕ Adicionar Novo Empréstimo")
     with st.form("form_emprestimo"):
-        col_form1, col_form2 = st.columns(2)
+        col_form1, col_form2, col_form3 = st.columns(3)
         
         with col_form1:
+            nome_emp = st.text_input("Nome da Pessoa:")
             tipo_emp = st.selectbox("Tipo:", ["Emprestado", "Recebido"], 
                                    help="Emprestado = Você emprestou para alguém | Recebido = Você pegou emprestado")
-            pessoa_emp = st.text_input("Pessoa:")
-            valor_emp = st.number_input("Valor (R$):", min_value=0.0, step=10.0)
+            valor_original = st.number_input("Valor Original (R$):", min_value=0.0, step=10.0)
         
         with col_form2:
+            taxa_juros = st.number_input("Taxa de Juros (%):", min_value=0.0, max_value=100.0, step=0.1, value=0.0)
+            parcelas_total = st.number_input("Total de Parcelas:", min_value=1, step=1, value=1)
             data_emprestimo = st.date_input("Data do Empréstimo:")
-            data_vencimento = st.date_input("Data de Vencimento:")
-            observacoes_emp = st.text_area("Observações:", placeholder="Ex: Juros, condições, etc.")
+        
+        with col_form3:
+            # Cálculos automáticos
+            if valor_original > 0 and parcelas_total > 0:
+                valor_com_juros = valor_original * (1 + taxa_juros/100)
+                valor_parcela = valor_com_juros / parcelas_total
+                
+                st.write(f"**Valor com Juros:** R$ {valor_com_juros:.2f}")
+                st.write(f"**Valor da Parcela:** R$ {valor_parcela:.2f}")
+            else:
+                valor_com_juros = 0
+                valor_parcela = 0
+                
+            observacoes_emp = st.text_area("Observações:", placeholder="Ex: condições especiais, etc.")
         
         enviar_emp = st.form_submit_button("💳 Registrar Empréstimo")
         
-        if enviar_emp and pessoa_emp:
+        if enviar_emp and nome_emp and valor_original > 0:
             novo_emprestimo = pd.DataFrame({
+                "Nome": [nome_emp],
                 "Tipo": [tipo_emp],
-                "Pessoa": [pessoa_emp],
-                "Valor": [valor_emp],
+                "Valor_Original": [valor_original],
+                "Valor_Com_Juros": [valor_com_juros],
+                "Parcelas_Total": [parcelas_total],
+                "Parcelas_Pagas": [0],
+                "Valor_Parcela": [valor_parcela],
                 "Data_Emprestimo": [data_emprestimo],
-                "Data_Vencimento": [data_vencimento],
-                "Status": ["Pendente"],
+                "Status": ["Ativo"],
                 "Observacoes": [observacoes_emp]
             })
             
             df_emprestimos = pd.concat([df_emprestimos, novo_emprestimo], ignore_index=True)
-            save_csv_data(df_emprestimos, emprestimos_path, f"✅ Empréstimo {tipo_emp.lower()} para/de {pessoa_emp} registrado e salvo!")
+            save_csv_data(df_emprestimos, emprestimos_path, f"✅ Empréstimo {tipo_emp.lower()} para/de {nome_emp} registrado e salvo!")
+            
+            # Se é empréstimo recebido, adicionar na renda familiar
+            if tipo_emp == "Recebido":
+                registrar_emprestimo_na_renda(nome_emp, valor_original, "Empréstimo Recebido", data_emprestimo)
+                
         elif enviar_emp:
-            st.error("❌ Por favor, preencha o nome da pessoa.")
+            st.error("❌ Por favor, preencha todos os campos obrigatórios.")
+    
     
     # Controles de gerenciamento
     if not df_emprestimos.empty:
         st.subheader("🔧 Gerenciar Empréstimos")
-        col_ger1, col_ger2 = st.columns(2)
         
-        with col_ger1:
-            st.write("**Marcar como Quitado:**")
-            emprestimos_pendentes = df_emprestimos[df_emprestimos['Status'] == 'Pendente']
-            if not emprestimos_pendentes.empty:
-                opcoes_quitar = []
-                indices_quitar = []
-                for idx, row in emprestimos_pendentes.iterrows():
-                    opcoes_quitar.append(f"{row['Tipo']} - {row['Pessoa']} - R$ {row['Valor']:.2f}")
-                    indices_quitar.append(idx)
+        # Seção de pagamento de parcelas
+        st.write("**💳 Registrar Pagamento de Parcela:**")
+        emprestimos_ativos = df_emprestimos[df_emprestimos['Status'] == 'Ativo']
+        
+        if not emprestimos_ativos.empty:
+            opcoes_pagamento = []
+            indices_pagamento = []
+            
+            for idx, row in emprestimos_ativos.iterrows():
+                parcelas_restantes = row['Parcelas_Total'] - row['Parcelas_Pagas']
+                if parcelas_restantes > 0:
+                    opcoes_pagamento.append(f"{row['Nome']} - {row['Tipo']} - Parcela {row['Parcelas_Pagas']+1}/{row['Parcelas_Total']} - R$ {row['Valor_Parcela']:.2f}")
+                    indices_pagamento.append(idx)
+            
+            if opcoes_pagamento:
+                parcela_pagar = st.selectbox("Selecione a parcela:", opcoes_pagamento, key="pagar_parcela")
+                data_pagamento = st.date_input("Data do Pagamento:", key="data_pagamento")
                 
-                if opcoes_quitar:
-                    emprestimo_quitar = st.selectbox("Selecione para quitar:", opcoes_quitar, key="quitar_emp")
-                    
-                    if st.button("✅ Marcar como Quitado", key="btn_quitar_emp"):
-                        idx_quitar = indices_quitar[opcoes_quitar.index(emprestimo_quitar)]
+                col_btn1, col_btn2 = st.columns(2)
+                with col_btn1:
+                    if st.button("💰 Registrar Pagamento", key="btn_pagar_parcela"):
+                        idx_pagar = indices_pagamento[opcoes_pagamento.index(parcela_pagar)]
+                        row_atual = df_emprestimos.loc[idx_pagar]
+                        
+                        # Atualizar parcelas pagas
+                        df_emprestimos.loc[idx_pagar, 'Parcelas_Pagas'] += 1
+                        
+                        # Verificar se foi quitado
+                        if df_emprestimos.loc[idx_pagar, 'Parcelas_Pagas'] >= df_emprestimos.loc[idx_pagar, 'Parcelas_Total']:
+                            df_emprestimos.loc[idx_pagar, 'Status'] = 'Quitado'
+                            status_msg = "e empréstimo quitado"
+                        else:
+                            status_msg = ""
+                        
+                        # Registrar como despesa na renda familiar se for empréstimo recebido
+                        if row_atual['Tipo'] == 'Recebido':
+                            registrar_emprestimo_na_renda(row_atual['Nome'], row_atual['Valor_Parcela'], "Pagamento Empréstimo", data_pagamento)
+                        
+                        save_csv_data(df_emprestimos, emprestimos_path, f"✅ Parcela registrada {status_msg} e salvo!")
+                
+                with col_btn2:
+                    if st.button("📋 Quitar Totalmente", key="btn_quitar_total"):
+                        idx_quitar = indices_pagamento[opcoes_pagamento.index(parcela_pagar)]
+                        row_atual = df_emprestimos.loc[idx_quitar]
+                        
+                        # Calcular parcelas restantes
+                        parcelas_restantes = row_atual['Parcelas_Total'] - row_atual['Parcelas_Pagas']
+                        valor_restante = parcelas_restantes * row_atual['Valor_Parcela']
+                        
+                        # Quitar totalmente
+                        df_emprestimos.loc[idx_quitar, 'Parcelas_Pagas'] = row_atual['Parcelas_Total']
                         df_emprestimos.loc[idx_quitar, 'Status'] = 'Quitado'
-                        save_csv_data(df_emprestimos, emprestimos_path, "✅ Empréstimo marcado como quitado e salvo!")
+                        
+                        # Registrar valor restante como despesa se for empréstimo recebido
+                        if row_atual['Tipo'] == 'Recebido':
+                            registrar_emprestimo_na_renda(row_atual['Nome'], valor_restante, "Quitação Empréstimo", data_pagamento)
+                        
+                        save_csv_data(df_emprestimos, emprestimos_path, f"✅ Empréstimo quitado totalmente (R$ {valor_restante:.2f}) e salvo!")
             else:
-                st.info("Nenhum empréstimo pendente")
+                st.info("Nenhuma parcela pendente para pagamento")
+        else:
+            st.info("Nenhum empréstimo ativo")
+            
+        st.divider()
         
-        with col_ger2:
-            st.write("**Excluir Registro:**")
-            opcoes_exclusao_emp = []
-            for idx, row in df_emprestimos.iterrows():
-                opcoes_exclusao_emp.append(f"{row['Tipo']} - {row['Pessoa']} - R$ {row['Valor']:.2f} - {row['Status']}")
-            
-            registro_exclusao_emp = st.selectbox("Selecione para excluir:", opcoes_exclusao_emp, key="exclusao_emprestimo")
-            
-            if st.button("🗑️ Excluir Registro de Empréstimo", type="secondary", key="btn_excluir_emprestimo"):
-                idx_excluir = opcoes_exclusao_emp.index(registro_exclusao_emp)
-                df_emprestimos = df_emprestimos.drop(df_emprestimos.index[idx_excluir]).reset_index(drop=True)
-                save_csv_data(df_emprestimos, emprestimos_path, "✅ Registro de empréstimo excluído e salvo!")
+        # Seção de exclusão
+        st.write("**🗑️ Excluir Registro:**")
+        opcoes_exclusao_emp = []
+        for idx, row in df_emprestimos.iterrows():
+            opcoes_exclusao_emp.append(f"{row['Nome']} - {row['Tipo']} - R$ {row['Valor_Original']:.2f} - {row['Status']}")
+        
+        registro_exclusao_emp = st.selectbox("Selecione para excluir:", opcoes_exclusao_emp, key="exclusao_emprestimo")
+        
+        if st.button("🗑️ Excluir Registro de Empréstimo", type="secondary", key="btn_excluir_emprestimo"):
+            idx_excluir = opcoes_exclusao_emp.index(registro_exclusao_emp)
+            df_emprestimos = df_emprestimos.drop(df_emprestimos.index[idx_excluir]).reset_index(drop=True)
+            save_csv_data(df_emprestimos, emprestimos_path, "✅ Registro de empréstimo excluído e salvo!")

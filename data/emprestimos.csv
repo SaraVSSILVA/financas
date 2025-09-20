@@ -1,1 +1,1 @@
-Tipo,Pessoa,Valor,Data_Emprestimo,Data_Vencimento,Status,Observacoes
+Nome,Tipo,Valor_Original,Valor_Com_Juros,Parcelas_Total,Parcelas_Pagas,Valor_Parcela,Data_Emprestimo,Status,Observacoes
