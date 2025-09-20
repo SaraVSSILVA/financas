@@ -421,7 +421,7 @@ with abas[0]:
             else:
                 # Adicionar registros CLT
                 novos_registros = pd.DataFrame({
-                    "Membro": ["Sara", "Sara"],
+                    "Membro": ["Breno", "Breno"],
                     "Tipo": ["Salário", "Vale"],
                     "Valor": [salario, vale],
                     "Data": [data_salario, data_vale]
@@ -431,6 +431,39 @@ with abas[0]:
                 save_csv_data(df_familia, renda_path, f"✅ Ganhos CLT de {mes}/{ano} registrados na renda familiar e salvos!")
             
         st.info("💡 **Dica**: Clique no botão acima para incluir automaticamente o salário e vale na Renda Familiar.")
+        
+        # Seção para excluir ganhos CLT
+        st.divider()
+        st.subheader("🗑️ Excluir Ganhos CLT")
+        
+        # Filtrar registros CLT existentes na renda familiar
+        df_familia_temp = load_csv_data(renda_path)
+        if not df_familia_temp.empty:
+            df_familia_temp['Data'] = pd.to_datetime(df_familia_temp['Data'], errors='coerce')
+            registros_clt = df_familia_temp[
+                (df_familia_temp['Membro'] == 'Breno') & 
+                (df_familia_temp['Tipo'].isin(['Salário', 'Vale']))
+            ].copy()
+            
+            if not registros_clt.empty:
+                st.write("**Registros CLT existentes:**")
+                opcoes_clt = []
+                for idx, row in registros_clt.iterrows():
+                    data_formatada = row['Data'].strftime('%m/%Y') if pd.notna(row['Data']) else 'Data inválida'
+                    opcoes_clt.append(f"{row['Tipo']} - R$ {row['Valor']:.2f} - {data_formatada}")
+                
+                if opcoes_clt:
+                    registro_clt_exclusao = st.selectbox("Selecione o registro CLT para excluir:", opcoes_clt, key="exclusao_clt")
+                    
+                    if st.button("🗑️ Excluir Registro CLT", type="secondary", key="btn_excluir_clt"):
+                        idx_excluir = opcoes_clt.index(registro_clt_exclusao)
+                        idx_real = registros_clt.index[idx_excluir]
+                        df_familia_temp = df_familia_temp.drop(idx_real).reset_index(drop=True)
+                        save_csv_data(df_familia_temp, renda_path, "✅ Registro CLT excluído e salvo!")
+            else:
+                st.info("Nenhum registro CLT encontrado para excluir.")
+        else:
+            st.info("Nenhum dado de renda familiar encontrado.")
 
  # ============================
  # Aba 2 – Renda Familiar
@@ -598,8 +631,10 @@ with abas[1]:
 
     st.subheader("➕ Adicionar nova renda familiar")
     with st.form("form_renda"):
-        membro = st.text_input("Nome do membro")
-        tipo = st.selectbox("Tipo de renda", ["Salário", "Freelance", "Investimento", "Outro"])
+        membro = st.selectbox("Nome do membro", ["Breno", "Sara", "Adhara", "Outro"], key="membro_renda")
+        if membro == "Outro":
+            membro = st.text_input("Digite o nome do membro")
+        tipo = st.selectbox("Tipo de renda", ["Salário", "Freelance", "Investimento", "Vale", "Outro"])
         valor = st.number_input("Valor (R$)", min_value=0.0, step=100.0)
         data = st.date_input("Data")
         enviar = st.form_submit_button("Adicionar")
