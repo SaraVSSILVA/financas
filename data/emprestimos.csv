@@ -1,1 +1,2 @@
-Nome,Tipo,Valor_Original,Valor_Com_Juros,Parcelas_Total,Parcelas_Pagas,Valor_Parcela,Data_Emprestimo,Status,Observacoes
+Nome,Tipo,Valor_Liquido_Recebido,Parcelas_Total,Total_A_Pagar,Valor_Parcela_Mensal,Parcelas_Pagas,Taxa_Juros_Calculada,Custo_Total_Juros,Data_Emprestimo,Status,Observacoes,Parcelas_Restantes,Valor_Restante,Progresso
+Breno,Recebido,2189.23,6,3318.12,553.02,2,7.176634693332362,1128.89,2025-09-19,Ativo,Empréstimo CLT (desconto em folha),5,2765.1,16.7
