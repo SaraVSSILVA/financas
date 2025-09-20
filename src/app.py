@@ -2,6 +2,27 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
+# Inicializar session state
+if 'refresh_data' not in st.session_state:
+    st.session_state.refresh_data = False
+
+# Função para carregar dados com cache
+@st.cache_data
+def load_csv_data(file_path):
+    try:
+        return pd.read_csv(file_path)
+    except FileNotFoundError:
+        # Retornar DataFrame vazio se arquivo não existir
+        if 'horas' in file_path:
+            return pd.DataFrame(columns=['Data', 'Horas', 'Cotacao', 'Semana', 'Nota', 'Valor_USD', 'Valor_BRL', 'Valor_Ajustado_USD', 'Valor_Ajustado_BRL', 'Pago'])
+        elif 'familia' in file_path:
+            return pd.DataFrame(columns=['Membro', 'Tipo', 'Valor', 'Data'])
+        elif 'despesas' in file_path:
+            return pd.DataFrame(columns=['Membro', 'Categoria', 'Valor', 'Data'])
+        elif 'investimentos' in file_path:
+            return pd.DataFrame(columns=['Membro', 'Tipo', 'Valor', 'Data', 'Rendimento'])
+    except Exception:
+        return pd.DataFrame()
 
 st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
 
@@ -84,9 +105,15 @@ invest_path = 'data/investimentos.csv'
 
 
 # ============================
-# Título
+# Título e Controles
 # ============================
-st.title("Registro Financeiro")
+col_title, col_refresh = st.columns([4, 1])
+with col_title:
+    st.title("Registro Financeiro")
+with col_refresh:
+    if st.button("🔄 Atualizar Dados", help="Clique para atualizar os dados exibidos"):
+        st.session_state.refresh_data = True
+        st.success("Dados atualizados! ✅")
 
 # ============================
 # Abas do Dashboard
@@ -103,7 +130,13 @@ with abas[0]:
     # --- Freelancer ---
     with subabas[0]:
         st.subheader(" Ganhos Freelancer")
-        df_horas = pd.read_csv('data/horas.csv')
+        
+        # Limpar cache se refresh foi solicitado
+        if st.session_state.refresh_data:
+            load_csv_data.clear()
+            st.session_state.refresh_data = False
+        
+        df_horas = load_csv_data('data/horas.csv')
         # Garantir que a coluna 'Pago' existe
         if 'Pago' not in df_horas.columns:
             df_horas['Pago'] = False
@@ -207,34 +240,113 @@ with abas[0]:
             col1, col2 = st.columns(2)
             
             with col1:
-                st.write("**Atualizar Status Financeiro:**")
+                st.write("**💰 Marcar como Recebido com Nota Real:**")
                 if not df_horas.empty:
                     opcoes_pagamento = []
+                    indices_pagamento = []
                     for idx, row in df_horas.iterrows():
                         status = "💰 Recebido" if row.get('Pago', False) else "📈 Projeção"
-                        opcoes_pagamento.append(f"Semana {row['Semana']} - {row['Data']} ({status})")
+                        opcoes_pagamento.append(f"Semana {row['Semana']} - {row['Data']} - Nota: {row['Nota']} ({status})")
+                        indices_pagamento.append(idx)
                     
-                    registro_pagamento = st.selectbox("Selecione o registro:", opcoes_pagamento)
+                    registro_pagamento = st.selectbox("Selecione o registro:", opcoes_pagamento, key="select_pagamento")
+                    idx_selecionado = indices_pagamento[opcoes_pagamento.index(registro_pagamento)]
+                    registro_atual = df_horas.loc[idx_selecionado]
                     
-                    col_btn1, col_btn2 = st.columns(2)
-                    with col_btn1:
-                        if st.button("💰 Marcar como Recebido"):
-                            idx_selecionado = opcoes_pagamento.index(registro_pagamento)
+                    # Mostrar informações atuais
+                    col_info1, col_info2 = st.columns(2)
+                    with col_info1:
+                        st.info(f"Nota atual: **{registro_atual['Nota']}**")
+                    with col_info2:
+                        valor_atual = registro_atual.get('Valor_Ajustado_BRL', 0)
+                        st.info(f"Valor atual: **R$ {valor_atual:.2f}**")
+                    
+                    # Interface para ajustar
+                    if not registro_atual.get('Pago', False):  # Só mostrar se for projeção
+                        st.write("**Ajustar nota real recebida:**")
+                        nova_nota = st.selectbox("Nota real recebida:", [4, 3, 2, 1], 
+                                                index=[4, 3, 2, 1].index(int(registro_atual['Nota'])), 
+                                                key="nova_nota",
+                                                help="4=Excelente (+20%), 3=Bom (normal), 2=Regular (-50%), 1=Ruim (R$0)")
+                        
+                        # Calcular novo valor
+                        def ajustar_nota(valor_base, nota):
+                            return valor_base * 1.2 if nota == 4 else valor_base if nota == 3 else valor_base * 0.5 if nota == 2 else 0
+                        
+                        valor_base_usd = registro_atual['Valor_USD']
+                        cotacao = registro_atual['Cotacao']
+                        novo_valor_usd = ajustar_nota(valor_base_usd, nova_nota)
+                        novo_valor_brl = novo_valor_usd * cotacao
+                        
+                        # Mostrar preview do novo valor
+                        if nova_nota != registro_atual['Nota']:
+                            diferenca = novo_valor_brl - valor_atual
+                            if diferenca > 0:
+                                st.success(f"💰 Novo valor: R$ {novo_valor_brl:.2f} (+R$ {diferenca:.2f})")
+                            else:
+                                st.warning(f"📉 Novo valor: R$ {novo_valor_brl:.2f} ({diferenca:.2f})")
+                        
+                        if st.button("✅ Confirmar Recebimento", key="btn_confirmar_recebimento"):
+                            # Atualizar nota e valores
+                            df_horas.loc[idx_selecionado, 'Nota'] = nova_nota
+                            df_horas.loc[idx_selecionado, 'Valor_Ajustado_USD'] = novo_valor_usd
+                            df_horas.loc[idx_selecionado, 'Valor_Ajustado_BRL'] = novo_valor_brl
                             df_horas.loc[idx_selecionado, 'Pago'] = True
                             df_horas.to_csv('data/horas.csv', index=False)
-                            st.success("Marcado como recebido!")
-                            st.rerun()
+                            st.success(f"✅ Marcado como recebido com nota {nova_nota}!")
                     
-                    with col_btn2:
-                        if st.button("📈 Marcar como Projeção"):
-                            idx_selecionado = opcoes_pagamento.index(registro_pagamento)
-                            df_horas.loc[idx_selecionado, 'Pago'] = False
-                            df_horas.to_csv('data/horas.csv', index=False)
-                            st.success("Marcado como projeção!")
-                            st.rerun()
+                    else:  # Se já está pago
+                        col_btn1, col_btn2 = st.columns(2)
+                        with col_btn1:
+                            if st.button("📈 Voltar para Projeção", key="btn_voltar_projecao"):
+                                df_horas.loc[idx_selecionado, 'Pago'] = False
+                                df_horas.to_csv('data/horas.csv', index=False)
+                                st.success("Voltou para projeção!")
+                        
+                        with col_btn2:
+                            st.write("*Já recebido*")
             
             with col2:
-                st.write("**Excluir Registro:**")
+                st.write("**🔧 Outras Opções:**")
+                
+                # Seção para editar notas de registros já pagos
+                st.write("*Editar Nota de Registro Recebido:*")
+                if not df_horas.empty:
+                    registros_pagos = df_horas[df_horas['Pago'] == True]
+                    if not registros_pagos.empty:
+                        opcoes_edicao = []
+                        indices_edicao = []
+                        for idx, row in registros_pagos.iterrows():
+                            opcoes_edicao.append(f"Semana {row['Semana']} - Nota: {row['Nota']}")
+                            indices_edicao.append(idx)
+                        
+                        if opcoes_edicao:
+                            registro_edicao = st.selectbox("Editar nota:", opcoes_edicao, key="select_edicao")
+                            idx_edicao = indices_edicao[opcoes_edicao.index(registro_edicao)]
+                            
+                            nova_nota_edicao = st.selectbox("Nova nota:", [4, 3, 2, 1], 
+                                                          index=[4, 3, 2, 1].index(int(df_horas.loc[idx_edicao, 'Nota'])), 
+                                                          key="nova_nota_edicao")
+                            
+                            if st.button("✏️ Atualizar Nota", key="btn_editar_nota"):
+                                # Recalcular valores com nova nota
+                                valor_base_usd = df_horas.loc[idx_edicao, 'Valor_USD']
+                                cotacao = df_horas.loc[idx_edicao, 'Cotacao']
+                                novo_valor_usd = ajustar(valor_base_usd, nova_nota_edicao)
+                                novo_valor_brl = novo_valor_usd * cotacao
+                                
+                                df_horas.loc[idx_edicao, 'Nota'] = nova_nota_edicao
+                                df_horas.loc[idx_edicao, 'Valor_Ajustado_USD'] = novo_valor_usd
+                                df_horas.loc[idx_edicao, 'Valor_Ajustado_BRL'] = novo_valor_brl
+                                df_horas.to_csv('data/horas.csv', index=False)
+                                st.success(f"✏️ Nota atualizada para {nova_nota_edicao}!")
+                    else:
+                        st.info("Nenhum registro recebido para editar")
+                
+                st.divider()
+                
+                # Seção de exclusão
+                st.write("*Excluir Registro:*")
                 if not df_horas.empty:
                     opcoes_exclusao = []
                     for idx, row in df_horas.iterrows():
@@ -242,12 +354,11 @@ with abas[0]:
                     
                     registro_exclusao = st.selectbox("Selecione para excluir:", opcoes_exclusao, key="exclusao_horas")
                     
-                    if st.button("🗑️ Excluir Registro", type="secondary"):
+                    if st.button("🗑️ Excluir Registro", type="secondary", key="btn_excluir_horas"):
                         idx_excluir = opcoes_exclusao.index(registro_exclusao)
                         df_horas = df_horas.drop(df_horas.index[idx_excluir]).reset_index(drop=True)
                         df_horas.to_csv('data/horas.csv', index=False)
                         st.success("Registro excluído!")
-                        st.rerun()
         elif not df_horas.empty:
             st.info("Ainda não há dados completos para exibir o gráfico. Registre um ganho para visualizar.")
 
@@ -404,12 +515,11 @@ with abas[1]:
         
         registro_exclusao_renda = st.selectbox("Selecione para excluir:", opcoes_exclusao_renda, key="exclusao_renda")
         
-        if st.button("🗑️ Excluir Registro de Renda", type="secondary"):
+        if st.button("🗑️ Excluir Registro de Renda", type="secondary", key="btn_excluir_renda"):
             idx_excluir = opcoes_exclusao_renda.index(registro_exclusao_renda)
             df_familia = df_familia.drop(df_familia.index[idx_excluir]).reset_index(drop=True)
             df_familia.to_csv(renda_path, index=False)
             st.success("Registro de renda excluído!")
-            st.rerun()
 
     st.subheader("➕ Adicionar nova renda familiar")
     with st.form("form_renda"):
@@ -496,12 +606,11 @@ with abas[2]:
         
         registro_exclusao_despesa = st.selectbox("Selecione para excluir:", opcoes_exclusao_despesa, key="exclusao_despesa")
         
-        if st.button("🗑️ Excluir Registro de Despesa", type="secondary"):
+        if st.button("🗑️ Excluir Registro de Despesa", type="secondary", key="btn_excluir_despesa"):
             idx_excluir = opcoes_exclusao_despesa.index(registro_exclusao_despesa)
             df_despesas = df_despesas.drop(df_despesas.index[idx_excluir]).reset_index(drop=True)
             df_despesas.to_csv(despesas_path, index=False)
             st.success("Registro de despesa excluído!")
-            st.rerun()
 
 
 
@@ -559,9 +668,8 @@ with abas[3]:
         
         registro_exclusao_invest = st.selectbox("Selecione para excluir:", opcoes_exclusao_invest, key="exclusao_invest")
         
-        if st.button("🗑️ Excluir Registro de Investimento", type="secondary"):
+        if st.button("🗑️ Excluir Registro de Investimento", type="secondary", key="btn_excluir_invest"):
             idx_excluir = opcoes_exclusao_invest.index(registro_exclusao_invest)
             df_invest = df_invest.drop(df_invest.index[idx_excluir]).reset_index(drop=True)
             df_invest.to_csv(invest_path, index=False)
             st.success("Registro de investimento excluído!")
-            st.rerun()
