@@ -453,7 +453,7 @@ with abas[0]:
                 st.metric("🎯 Total Geral", f"R$ {total_geral:,.2f}")
             
             # Resumo semanal
-            df_horas['Data'] = pd.to_datetime(df_horas['Data'])
+            df_horas['Data'] = pd.to_datetime(df_horas['Data'], errors='coerce')
             resumo = df_horas.groupby('Semana').agg(
                 Periodo=('Data', lambda x: f"{x.min().date()} a {x.max().date()}"),
                 Total_Horas=('Horas', 'sum'),
@@ -774,7 +774,7 @@ with abas[1]:
         "Filtrar por mês",
         options=df_familia['Data']
             .dropna()
-            .apply(lambda x: pd.to_datetime(x).strftime('%Y-%m') if pd.notnull(x) and str(x).strip() != '' else None)
+            .apply(lambda x: pd.to_datetime(x, errors='coerce').strftime('%Y-%m') if pd.notnull(x) and str(x).strip() != '' else None)
             .dropna()
             .unique(),
         key="meses_renda"
@@ -785,7 +785,7 @@ with abas[1]:
     if tipos:
         df_filtrado = df_filtrado[df_filtrado['Tipo'].isin(tipos)]
     if meses:
-        df_filtrado['Mes'] = df_filtrado['Data'].apply(lambda x: pd.to_datetime(x).strftime('%Y-%m'))
+        df_filtrado['Mes'] = df_filtrado['Data'].apply(lambda x: pd.to_datetime(x, errors='coerce').strftime('%Y-%m'))
         df_filtrado = df_filtrado[df_filtrado['Mes'].isin(meses)]
     
     # Separar valores filtrados
@@ -813,7 +813,7 @@ with abas[1]:
             if 'Pago' not in df_horas.columns:
                 df_horas['Pago'] = False
             
-            df_horas['Data'] = pd.to_datetime(df_horas['Data'])
+            df_horas['Data'] = pd.to_datetime(df_horas['Data'], errors='coerce')
             df_horas['MesAno'] = df_horas['Data'].dt.strftime('%Y-%m')
             
             # Separar pagos e pendentes
@@ -828,7 +828,7 @@ with abas[1]:
         # CLT
         df_fam = pd.read_csv(renda_path)
         if 'Data' in df_fam.columns and 'Tipo' in df_fam.columns and 'Valor' in df_fam.columns:
-            df_fam['Data'] = pd.to_datetime(df_fam['Data'])
+            df_fam['Data'] = pd.to_datetime(df_fam['Data'], errors='coerce')
             df_fam['MesAno'] = df_fam['Data'].dt.strftime('%Y-%m')
             clt_mask = df_fam['Tipo'].str.lower().isin(['salário', 'salario', 'vale'])
             resumo_clt = df_fam[clt_mask].groupby('MesAno')['Valor'].sum().reset_index()
@@ -907,11 +907,39 @@ with abas[1]:
  # ============================
 with abas[2]:
     st.header("Despesas Familiares")
-    df_despesas = pd.read_csv(despesas_path)
-    df_despesas['Data'] = pd.to_datetime(df_despesas['Data'])
-    df_despesas['Mes'] = df_despesas['Data'].dt.strftime('%Y-%m')
-    meses_d = st.multiselect("Filtrar por mês", options=sorted(df_despesas['Mes'].unique()), key="meses_despesa")
-    categorias_d = st.multiselect("Filtrar por categoria", options=df_despesas['Categoria'].unique())
+    try:
+        df_despesas = pd.read_csv(despesas_path)
+        if not df_despesas.empty and 'Data' in df_despesas.columns:
+            # Remover linhas com datas vazias ou inválidas antes da conversão
+            df_despesas = df_despesas.dropna(subset=['Data'])
+            df_despesas = df_despesas[df_despesas['Data'].str.strip() != '']
+            
+            if not df_despesas.empty:
+                df_despesas['Data'] = pd.to_datetime(df_despesas['Data'], errors='coerce')
+                # Remover linhas onde a conversão falhou
+                df_despesas = df_despesas.dropna(subset=['Data'])
+                
+                if not df_despesas.empty:
+                    df_despesas['Mes'] = df_despesas['Data'].dt.strftime('%Y-%m')
+                else:
+                    df_despesas['Mes'] = []
+            else:
+                df_despesas['Mes'] = []
+        else:
+            df_despesas = pd.DataFrame(columns=["Membro", "Categoria", "Valor", "Data", "Mes"])
+    except FileNotFoundError:
+        df_despesas = pd.DataFrame(columns=["Membro", "Categoria", "Valor", "Data", "Mes"])
+    except Exception as e:
+        st.error(f"Erro ao processar arquivo de despesas: {e}")
+        df_despesas = pd.DataFrame(columns=["Membro", "Categoria", "Valor", "Data", "Mes"])
+    
+    # Filtros apenas se há dados
+    if not df_despesas.empty and 'Mes' in df_despesas.columns and len(df_despesas['Mes']) > 0:
+        meses_d = st.multiselect("Filtrar por mês", options=sorted(df_despesas['Mes'].dropna().unique()), key="meses_despesa")
+        categorias_d = st.multiselect("Filtrar por categoria", options=df_despesas['Categoria'].unique())
+    else:
+        meses_d = []
+        categorias_d = []
     df_despesas_filtrado = df_despesas.copy()
     if meses_d:
         df_despesas_filtrado = df_despesas_filtrado[df_despesas_filtrado['Mes'].isin(meses_d)]
@@ -922,10 +950,16 @@ with abas[2]:
 
     # Resumo geral por categoria
     st.subheader("Resumo Geral por Categoria")
-    resumo_cat = df_despesas_filtrado.groupby('Categoria')['Valor'].sum().reset_index().sort_values('Valor', ascending=False)
-    fig_cat = px.pie(resumo_cat, names='Categoria', values='Valor', title='Despesas por Categoria')
-    st.plotly_chart(fig_cat, use_container_width=True)
-    st.dataframe(resumo_cat)
+    if not df_despesas_filtrado.empty:
+        resumo_cat = df_despesas_filtrado.groupby('Categoria')['Valor'].sum().reset_index().sort_values('Valor', ascending=False)
+        if not resumo_cat.empty:
+            fig_cat = px.pie(resumo_cat, names='Categoria', values='Valor', title='Despesas por Categoria')
+            st.plotly_chart(fig_cat, use_container_width=True)
+            st.dataframe(resumo_cat)
+        else:
+            st.info("Nenhuma despesa para exibir.")
+    else:
+        st.info("Nenhuma despesa registrada.")
 
     # Detalhamento por membro
     st.subheader("Detalhamento por Membro")
@@ -980,8 +1014,11 @@ with abas[3]:
     st.header("Investimentos Familiares")
     try:
         df_invest = pd.read_csv(invest_path)
-        df_invest['Data'] = pd.to_datetime(df_invest['Data'])
-        df_invest['Mes'] = df_invest['Data'].dt.strftime('%Y-%m')
+        if not df_invest.empty and 'Data' in df_invest.columns:
+            df_invest['Data'] = pd.to_datetime(df_invest['Data'], errors='coerce')
+            df_invest['Mes'] = df_invest['Data'].dt.strftime('%Y-%m')
+        else:
+            df_invest['Mes'] = []
     except FileNotFoundError:
         df_invest = pd.DataFrame(columns=["Membro", "Tipo", "Valor", "Data", "Rendimento", "Mes"])
     df_invest_filtrado = df_invest.copy() if not df_invest.empty else pd.DataFrame(columns=df_invest.columns)
@@ -1121,7 +1158,7 @@ with abas[4]:
         
         # Preparar dados para exibição (dados já processados pela função)
         df_display = df_emprestimos.copy()
-        df_display['Data_Emprestimo'] = pd.to_datetime(df_display['Data_Emprestimo']).dt.strftime('%d/%m/%Y')
+        df_display['Data_Emprestimo'] = pd.to_datetime(df_display['Data_Emprestimo'], errors='coerce').dt.strftime('%d/%m/%Y')
         
         # Função para destacar por status
         def highlight_status_emp(row):
