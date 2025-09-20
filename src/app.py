@@ -9,8 +9,7 @@ pd.set_option('future.no_silent_downcasting', True)
 if 'refresh_data' not in st.session_state:
     st.session_state.refresh_data = False
 
-# Função para carregar dados com cache
-@st.cache_data
+# Função para carregar dados sem cache agressivo
 def load_csv_data(file_path):
     try:
         return pd.read_csv(file_path)
@@ -28,6 +27,22 @@ def load_csv_data(file_path):
             return pd.DataFrame(columns=['Tipo', 'Pessoa', 'Valor', 'Data_Emprestimo', 'Data_Vencimento', 'Status', 'Observacoes'])
     except Exception:
         return pd.DataFrame()
+
+# Função para salvar dados com verificação
+def save_csv_data(df, file_path, success_message="Dados salvos com sucesso!"):
+    try:
+        df.to_csv(file_path, index=False)
+        # Verificar se foi salvo corretamente
+        verificacao = pd.read_csv(file_path)
+        if len(verificacao) == len(df):
+            st.success(success_message)
+            return True
+        else:
+            st.error("❌ Erro ao salvar: dados não foram gravados corretamente!")
+            return False
+    except Exception as e:
+        st.error(f"❌ Erro ao salvar dados: {str(e)}")
+        return False
 
 st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
 
@@ -137,11 +152,6 @@ with abas[0]:
     with subabas[0]:
         st.subheader(" Ganhos Freelancer")
         
-        # Limpar cache se refresh foi solicitado
-        if st.session_state.refresh_data:
-            load_csv_data.clear()
-            st.session_state.refresh_data = False
-        
         df_horas = load_csv_data('data/horas.csv')
         # Garantir que a coluna 'Pago' existe
         if 'Pago' not in df_horas.columns:
@@ -173,8 +183,7 @@ with abas[0]:
                     "Pago": [False]
                 })
                 df_horas = pd.concat([df_horas, novo], ignore_index=True)
-                df_horas.to_csv('data/horas.csv', index=False)
-                st.success("Ganho registrado!")
+                save_csv_data(df_horas, 'data/horas.csv', "✅ Ganho registrado e salvo!")
         
         if not df_horas.empty and 'Valor_Ajustado_BRL' in df_horas.columns:
             # Métricas de Efetivo vs Projeção
@@ -298,16 +307,14 @@ with abas[0]:
                             df_horas.loc[idx_selecionado, 'Valor_Ajustado_USD'] = novo_valor_usd
                             df_horas.loc[idx_selecionado, 'Valor_Ajustado_BRL'] = novo_valor_brl
                             df_horas.loc[idx_selecionado, 'Pago'] = True
-                            df_horas.to_csv('data/horas.csv', index=False)
-                            st.success(f"✅ Marcado como recebido com nota {nova_nota}!")
+                            save_csv_data(df_horas, 'data/horas.csv', f"✅ Marcado como recebido com nota {nova_nota} e salvo!")
                     
                     else:  # Se já está pago
                         col_btn1, col_btn2 = st.columns(2)
                         with col_btn1:
                             if st.button("📈 Voltar para Projeção", key="btn_voltar_projecao"):
                                 df_horas.loc[idx_selecionado, 'Pago'] = False
-                                df_horas.to_csv('data/horas.csv', index=False)
-                                st.success("Voltou para projeção!")
+                                save_csv_data(df_horas, 'data/horas.csv', "✅ Voltou para projeção e salvo!")
                         
                         with col_btn2:
                             st.write("*Já recebido*")
@@ -344,8 +351,7 @@ with abas[0]:
                                 df_horas.loc[idx_edicao, 'Nota'] = nova_nota_edicao
                                 df_horas.loc[idx_edicao, 'Valor_Ajustado_USD'] = novo_valor_usd
                                 df_horas.loc[idx_edicao, 'Valor_Ajustado_BRL'] = novo_valor_brl
-                                df_horas.to_csv('data/horas.csv', index=False)
-                                st.success(f"✏️ Nota atualizada para {nova_nota_edicao}!")
+                                save_csv_data(df_horas, 'data/horas.csv', f"✏️ Nota atualizada para {nova_nota_edicao} e salvo!")
                     else:
                         st.info("Nenhum registro recebido para editar")
                 
@@ -363,8 +369,7 @@ with abas[0]:
                     if st.button("🗑️ Excluir Registro", type="secondary", key="btn_excluir_horas"):
                         idx_excluir = opcoes_exclusao.index(registro_exclusao)
                         df_horas = df_horas.drop(df_horas.index[idx_excluir]).reset_index(drop=True)
-                        df_horas.to_csv('data/horas.csv', index=False)
-                        st.success("Registro excluído!")
+                        save_csv_data(df_horas, 'data/horas.csv', "✅ Registro excluído e salvo!")
         elif not df_horas.empty:
             st.info("Ainda não há dados completos para exibir o gráfico. Registre um ganho para visualizar.")
 
@@ -423,8 +428,7 @@ with abas[0]:
                 })
                 
                 df_familia = pd.concat([df_familia, novos_registros], ignore_index=True)
-                df_familia.to_csv(renda_path, index=False)
-                st.success(f"✅ Ganhos CLT de {mes}/{ano} registrados na renda familiar!")
+                save_csv_data(df_familia, renda_path, f"✅ Ganhos CLT de {mes}/{ano} registrados na renda familiar e salvos!")
             
         st.info("💡 **Dica**: Clique no botão acima para incluir automaticamente o salário e vale na Renda Familiar.")
 
@@ -590,8 +594,7 @@ with abas[1]:
         if st.button("🗑️ Excluir Registro de Renda", type="secondary", key="btn_excluir_renda"):
             idx_excluir = opcoes_exclusao_renda.index(registro_exclusao_renda)
             df_familia = df_familia.drop(df_familia.index[idx_excluir]).reset_index(drop=True)
-            df_familia.to_csv(renda_path, index=False)
-            st.success("Registro de renda excluído!")
+            save_csv_data(df_familia, renda_path, "✅ Registro de renda excluído e salvo!")
 
     st.subheader("➕ Adicionar nova renda familiar")
     with st.form("form_renda"):
@@ -608,8 +611,7 @@ with abas[1]:
                 "Data": [data]
             })
             df_familia = pd.concat([df_familia, novo_dado], ignore_index=True)
-            df_familia.to_csv(renda_path, index=False)
-            st.success(f"Renda de {membro} adicionada com sucesso!")
+            save_csv_data(df_familia, renda_path, f"✅ Renda de {membro} adicionada e salva com sucesso!")
 
 
 
@@ -666,8 +668,7 @@ with abas[2]:
                 "Data": [data_d]
             })
             df_despesas = pd.concat([df_despesas, nova_despesa], ignore_index=True)
-            df_despesas.to_csv(despesas_path, index=False)
-            st.success(f"Despesa de {membro_d} adicionada com sucesso!")
+            save_csv_data(df_despesas, despesas_path, f"✅ Despesa de {membro_d} adicionada e salva com sucesso!")
 
     # Funcionalidade de exclusão para despesas
     st.subheader("🗑️ Excluir Registro de Despesa")
@@ -681,8 +682,7 @@ with abas[2]:
         if st.button("🗑️ Excluir Registro de Despesa", type="secondary", key="btn_excluir_despesa"):
             idx_excluir = opcoes_exclusao_despesa.index(registro_exclusao_despesa)
             df_despesas = df_despesas.drop(df_despesas.index[idx_excluir]).reset_index(drop=True)
-            df_despesas.to_csv(despesas_path, index=False)
-            st.success("Registro de despesa excluído!")
+            save_csv_data(df_despesas, despesas_path, "✅ Registro de despesa excluído e salvo!")
 
 
 
@@ -728,8 +728,7 @@ with abas[3]:
                 "Rendimento": [rendimento_i]
             })
             df_invest = pd.concat([df_invest, novo_invest], ignore_index=True)
-            df_invest.to_csv(invest_path, index=False)
-            st.success(f"Investimento de {membro_i} adicionado com sucesso!")
+            save_csv_data(df_invest, invest_path, f"✅ Investimento de {membro_i} adicionado e salvo com sucesso!")
 
     # Funcionalidade de exclusão para investimentos
     st.subheader("🗑️ Excluir Registro de Investimento")
@@ -743,8 +742,7 @@ with abas[3]:
         if st.button("🗑️ Excluir Registro de Investimento", type="secondary", key="btn_excluir_invest"):
             idx_excluir = opcoes_exclusao_invest.index(registro_exclusao_invest)
             df_invest = df_invest.drop(df_invest.index[idx_excluir]).reset_index(drop=True)
-            df_invest.to_csv(invest_path, index=False)
-            st.success("Registro de investimento excluído!")
+            save_csv_data(df_invest, invest_path, "✅ Registro de investimento excluído e salvo!")
 
 
 # ============================
@@ -874,8 +872,7 @@ with abas[4]:
             })
             
             df_emprestimos = pd.concat([df_emprestimos, novo_emprestimo], ignore_index=True)
-            df_emprestimos.to_csv(emprestimos_path, index=False)
-            st.success(f"✅ Empréstimo {tipo_emp.lower()} para/de {pessoa_emp} registrado!")
+            save_csv_data(df_emprestimos, emprestimos_path, f"✅ Empréstimo {tipo_emp.lower()} para/de {pessoa_emp} registrado e salvo!")
         elif enviar_emp:
             st.error("❌ Por favor, preencha o nome da pessoa.")
     
@@ -900,8 +897,7 @@ with abas[4]:
                     if st.button("✅ Marcar como Quitado", key="btn_quitar_emp"):
                         idx_quitar = indices_quitar[opcoes_quitar.index(emprestimo_quitar)]
                         df_emprestimos.loc[idx_quitar, 'Status'] = 'Quitado'
-                        df_emprestimos.to_csv(emprestimos_path, index=False)
-                        st.success("✅ Empréstimo marcado como quitado!")
+                        save_csv_data(df_emprestimos, emprestimos_path, "✅ Empréstimo marcado como quitado e salvo!")
             else:
                 st.info("Nenhum empréstimo pendente")
         
@@ -916,5 +912,4 @@ with abas[4]:
             if st.button("🗑️ Excluir Registro de Empréstimo", type="secondary", key="btn_excluir_emprestimo"):
                 idx_excluir = opcoes_exclusao_emp.index(registro_exclusao_emp)
                 df_emprestimos = df_emprestimos.drop(df_emprestimos.index[idx_excluir]).reset_index(drop=True)
-                df_emprestimos.to_csv(emprestimos_path, index=False)
-                st.success("Registro de empréstimo excluído!")
+                save_csv_data(df_emprestimos, emprestimos_path, "✅ Registro de empréstimo excluído e salvo!")
