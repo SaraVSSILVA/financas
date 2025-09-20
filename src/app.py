@@ -104,6 +104,9 @@ with abas[0]:
     with subabas[0]:
         st.subheader(" Ganhos Freelancer")
         df_horas = pd.read_csv('data/horas.csv')
+        # Garantir que a coluna 'Pago' existe
+        if 'Pago' not in df_horas.columns:
+            df_horas['Pago'] = False
         def ajustar(valor, nota):
             return valor * 1.2 if nota == 4 else valor if nota == 3 else valor * 0.5 if nota == 2 else 0
         with st.form("form_freela"):
@@ -127,12 +130,28 @@ with abas[0]:
                     "Semana": [semana],
                     "Nota": [nota],
                     "Valor_Ajustado_USD": [valor_ajustado_usd],
-                    "Valor_Ajustado_BRL": [valor_ajustado_brl]
+                    "Valor_Ajustado_BRL": [valor_ajustado_brl],
+                    "Pago": [False]
                 })
                 df_horas = pd.concat([df_horas, novo], ignore_index=True)
                 df_horas.to_csv('data/horas.csv', index=False)
                 st.success("Ganho registrado!")
+        
         if not df_horas.empty and 'Valor_Ajustado_BRL' in df_horas.columns:
+            # Métricas de Efetivo vs Projeção
+            st.subheader("📊 Resumo Financeiro")
+            total_recebido = df_horas[df_horas['Pago'] == True]['Valor_Ajustado_BRL'].sum()
+            total_projecao = df_horas[df_horas['Pago'] == False]['Valor_Ajustado_BRL'].sum()
+            total_geral = total_recebido + total_projecao
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("💰 Total Recebido", f"R$ {total_recebido:,.2f}")
+            with col2:
+                st.metric("📈 Projeção Pendente", f"R$ {total_projecao:,.2f}")
+            with col3:
+                st.metric("🎯 Total Geral", f"R$ {total_geral:,.2f}")
+            
             # Resumo semanal
             df_horas['Data'] = pd.to_datetime(df_horas['Data'])
             resumo = df_horas.groupby('Semana').agg(
@@ -140,13 +159,14 @@ with abas[0]:
                 Total_Horas=('Horas', 'sum'),
                 Total_USD=('Valor_USD', 'sum'),
                 Total_Ajustado_USD=('Valor_Ajustado_USD', 'sum'),
-                Total_BRL=('Valor_BRL', 'sum')
+                Total_BRL=('Valor_BRL', 'sum'),
+                Total_Ajustado_BRL=('Valor_Ajustado_BRL', 'sum')
             ).reset_index()
-            # Gráfico de barras: ganhos semanais em BRL
-            st.subheader(" Ganhos Semanais em BRL")
-            fig_barras = px.bar(resumo, x='Semana', y='Total_BRL', color='Total_BRL',
+            # Gráfico de barras: ganhos semanais em BRL (considerando nota)
+            st.subheader(" Ganhos Semanais Ajustados por Qualidade")
+            fig_barras = px.bar(resumo, x='Semana', y='Total_Ajustado_BRL', color='Total_Ajustado_BRL',
                                color_continuous_scale='turbo',
-                               title='Ganhos Semanais em BRL', text_auto=True)
+                               title='Ganhos Semanais Ajustados por Qualidade (BRL)', text_auto=True)
             st.plotly_chart(fig_barras, use_container_width=True)
             # Gráfico de linha: evolução da qualidade
             st.subheader(" Evolução da Qualidade (Nota Média)")
@@ -157,15 +177,77 @@ with abas[0]:
             st.plotly_chart(fig_qualidade, use_container_width=True)
             # Formatação condicional
             st.subheader("Resumo Semanal")
-            semana_maior_ganho = resumo.loc[resumo['Total_BRL'].idxmax(), 'Semana'] if not resumo.empty else None
+            # Formatação condicional - usar valor ajustado para destacar maior ganho
+            semana_maior_ganho = resumo.loc[resumo['Total_Ajustado_BRL'].idxmax(), 'Semana'] if not resumo.empty else None
             def highlight_maior_ganho(row):
                 color = 'background-color: #1DE9B6; color: #181C2F; font-weight: bold;' if row['Semana'] == semana_maior_ganho else ''
                 return [color]*len(row)
-            st.dataframe(resumo.style.apply(highlight_maior_ganho, axis=1))
+            st.dataframe(resumo.style.apply(highlight_maior_ganho, axis=1).format({
+                'Total_Horas': '{:.1f}h',
+                'Total_USD': 'US$ {:.2f}',
+                'Total_Ajustado_USD': 'US$ {:.2f}',
+                'Total_BRL': 'R$ {:.2f}',
+                'Total_Ajustado_BRL': 'R$ {:.2f}'
+            }))
             st.subheader("Detalhamento dos Lançamentos")
             def highlight_nota_4(row):
                 return ['background-color: #1DE9B6; color: #181C2F; font-weight: bold;' if row.get('Nota',0)==4 else '' for _ in row]
-            st.dataframe(df_horas.style.apply(highlight_nota_4, axis=1))
+            st.dataframe(df_horas.style.apply(highlight_nota_4, axis=1).format({
+                'Horas': '{:.1f}h',
+                'Cotacao': 'R$ {:.2f}',
+                'Valor_USD': 'US$ {:.2f}',
+                'Valor_BRL': 'R$ {:.2f}',
+                'Valor_Ajustado_USD': 'US$ {:.2f}',
+                'Valor_Ajustado_BRL': 'R$ {:.2f}',
+                'Pago': lambda x: '💰 Recebido' if x else '📈 Projeção'
+            }))
+            
+            # Controles de pagamento e exclusão
+            st.subheader("🔧 Gerenciar Registros")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("**Atualizar Status Financeiro:**")
+                if not df_horas.empty:
+                    opcoes_pagamento = []
+                    for idx, row in df_horas.iterrows():
+                        status = "💰 Recebido" if row.get('Pago', False) else "📈 Projeção"
+                        opcoes_pagamento.append(f"Semana {row['Semana']} - {row['Data']} ({status})")
+                    
+                    registro_pagamento = st.selectbox("Selecione o registro:", opcoes_pagamento)
+                    
+                    col_btn1, col_btn2 = st.columns(2)
+                    with col_btn1:
+                        if st.button("💰 Marcar como Recebido"):
+                            idx_selecionado = opcoes_pagamento.index(registro_pagamento)
+                            df_horas.loc[idx_selecionado, 'Pago'] = True
+                            df_horas.to_csv('data/horas.csv', index=False)
+                            st.success("Marcado como recebido!")
+                            st.rerun()
+                    
+                    with col_btn2:
+                        if st.button("📈 Marcar como Projeção"):
+                            idx_selecionado = opcoes_pagamento.index(registro_pagamento)
+                            df_horas.loc[idx_selecionado, 'Pago'] = False
+                            df_horas.to_csv('data/horas.csv', index=False)
+                            st.success("Marcado como projeção!")
+                            st.rerun()
+            
+            with col2:
+                st.write("**Excluir Registro:**")
+                if not df_horas.empty:
+                    opcoes_exclusao = []
+                    for idx, row in df_horas.iterrows():
+                        opcoes_exclusao.append(f"Semana {row['Semana']} - {row['Data']} - {row['Horas']}h")
+                    
+                    registro_exclusao = st.selectbox("Selecione para excluir:", opcoes_exclusao, key="exclusao_horas")
+                    
+                    if st.button("🗑️ Excluir Registro", type="secondary"):
+                        idx_excluir = opcoes_exclusao.index(registro_exclusao)
+                        df_horas = df_horas.drop(df_horas.index[idx_excluir]).reset_index(drop=True)
+                        df_horas.to_csv('data/horas.csv', index=False)
+                        st.success("Registro excluído!")
+                        st.rerun()
         elif not df_horas.empty:
             st.info("Ainda não há dados completos para exibir o gráfico. Registre um ganho para visualizar.")
 
@@ -193,12 +275,37 @@ with abas[1]:
     # Ganhos freelancer automatizados
     try:
         df_horas = pd.read_csv('data/horas.csv')
-        total_freela = df_horas['Valor_Ajustado_BRL'].sum() if 'Valor_Ajustado_BRL' in df_horas.columns else 0
+        # Garantir que a coluna 'Pago' existe
+        if 'Pago' not in df_horas.columns:
+            df_horas['Pago'] = False
+        
+        # Calcular totais
+        total_freela_pendente = 0
+        total_freela_pago = 0
+        if 'Valor_Ajustado_BRL' in df_horas.columns:
+            total_freela_pago = df_horas[df_horas['Pago'] == True]['Valor_Ajustado_BRL'].sum()
+            total_freela_pendente = df_horas[df_horas['Pago'] == False]['Valor_Ajustado_BRL'].sum()
+        
+        total_freela = total_freela_pago + total_freela_pendente
     except Exception:
+        total_freela_pago = 0
+        total_freela_pendente = 0
         total_freela = 0
-    renda_total = df_familia['Valor'].sum() + total_freela
-    st.metric("Renda Familiar Total", f"R$ {renda_total:,.2f}")
-    st.caption(f"Inclui ganhos freelancer: R$ {total_freela:,.2f}")
+    
+    renda_total_efetiva = df_familia['Valor'].sum() + total_freela_pago  # Apenas valores pagos
+    renda_total_projetada = renda_total_efetiva + total_freela_pendente  # Incluindo projeções
+    
+    st.metric("💰 Renda Familiar Efetiva", f"R$ {renda_total_efetiva:,.2f}")
+    st.metric("📈 Renda Familiar Projetada", f"R$ {renda_total_projetada:,.2f}", 
+              delta=f"+R$ {total_freela_pendente:,.2f} (pendente)")
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("✅ Freelancer Recebido", f"R$ {total_freela_pago:,.2f}")
+    with col2:
+        st.metric("📊 Freelancer Projeção", f"R$ {total_freela_pendente:,.2f}")
+    with col3:
+        st.metric("🎯 Total Freelancer", f"R$ {total_freela:,.2f}")
 
     st.subheader("🔍 Filtros")
     membros = st.multiselect("Filtrar por membro", options=df_familia['Membro'].unique())
@@ -220,22 +327,32 @@ with abas[1]:
     if meses:
         df_filtrado['Mes'] = df_filtrado['Data'].apply(lambda x: pd.to_datetime(x).strftime('%Y-%m'))
         df_filtrado = df_filtrado[df_filtrado['Mes'].isin(meses)]
-    renda_total_filtrada = df_filtrado['Valor'].sum() + total_freela
+    renda_total_filtrada = df_filtrado['Valor'].sum() + total_freela_pago  # Apenas valores pagos
 
-    st.metric("Renda Familiar Filtrada", f"R$ {renda_total_filtrada:,.2f}")
-    st.caption(f"Inclui ganhos freelancer: R$ {total_freela:,.2f}")
+    st.metric("Renda Familiar Filtrada (Efetiva)", f"R$ {renda_total_filtrada:,.2f}")
+    st.caption(f"Inclui apenas ganhos freelancer pagos: R$ {total_freela_pago:,.2f}")
 
     # Gráfico resumo mensal Freelancer e CLT
     try:
         # Freelancer
         df_horas = pd.read_csv('data/horas.csv')
         if 'Data' in df_horas.columns and 'Valor_Ajustado_BRL' in df_horas.columns:
+            # Garantir que a coluna 'Pago' existe
+            if 'Pago' not in df_horas.columns:
+                df_horas['Pago'] = False
+            
             df_horas['Data'] = pd.to_datetime(df_horas['Data'])
             df_horas['MesAno'] = df_horas['Data'].dt.strftime('%Y-%m')
-            resumo_freela = df_horas.groupby('MesAno')['Valor_Ajustado_BRL'].sum().reset_index()
-            resumo_freela = resumo_freela.rename(columns={'Valor_Ajustado_BRL': 'Freelancer'})
+            
+            # Separar pagos e pendentes
+            resumo_freela_pago = df_horas[df_horas['Pago'] == True].groupby('MesAno')['Valor_Ajustado_BRL'].sum().reset_index()
+            resumo_freela_pago = resumo_freela_pago.rename(columns={'Valor_Ajustado_BRL': 'Freelancer_Pago'})
+            
+            resumo_freela_pendente = df_horas[df_horas['Pago'] == False].groupby('MesAno')['Valor_Ajustado_BRL'].sum().reset_index()
+            resumo_freela_pendente = resumo_freela_pendente.rename(columns={'Valor_Ajustado_BRL': 'Freelancer_Pendente'})
         else:
-            resumo_freela = pd.DataFrame(columns=['MesAno', 'Freelancer'])
+            resumo_freela_pago = pd.DataFrame(columns=['MesAno', 'Freelancer_Pago'])
+            resumo_freela_pendente = pd.DataFrame(columns=['MesAno', 'Freelancer_Pendente'])
         # CLT
         df_fam = pd.read_csv(renda_path)
         if 'Data' in df_fam.columns and 'Tipo' in df_fam.columns and 'Valor' in df_fam.columns:
@@ -247,12 +364,29 @@ with abas[1]:
         else:
             resumo_clt = pd.DataFrame(columns=['MesAno', 'CLT'])
         # Merge
-        resumo = pd.merge(resumo_freela, resumo_clt, on='MesAno', how='outer').fillna(0)
+        # Primeiro merge dos dados de freelancer
+        resumo_freelancer = pd.merge(resumo_freela_pago, resumo_freela_pendente, on='MesAno', how='outer').fillna(0)
+        
+        # Depois merge com CLT
+        resumo = pd.merge(resumo_freelancer, resumo_clt, on='MesAno', how='outer').fillna(0)
         resumo = resumo.sort_values('MesAno')
         if not resumo.empty:
-            fig_mensal = px.bar(resumo, x='MesAno', y=['Freelancer','CLT'], barmode='group',
-                               title='Resumo Mensal dos Ganhos (Freelancer x CLT)',
-                               labels={'value':'Total (R$)','MesAno':'Mês/Ano','variable':'Pessoa'})
+            fig_mensal = px.bar(resumo, x='MesAno', y=['Freelancer_Pago', 'Freelancer_Pendente', 'CLT'], barmode='group',
+                               title='💰 Ganhos Efetivos vs 📈 Projeções Mensais',
+                               labels={'value':'Total (R$)','MesAno':'Mês/Ano','variable':'Tipo'},
+                               color_discrete_map={
+                                   'Freelancer_Pago': '#1DE9B6',
+                                   'Freelancer_Pendente': '#FFA726', 
+                                   'CLT': '#42A5F5'
+                               })
+            
+            # Personalizar legendas
+            fig_mensal.for_each_trace(lambda t: t.update(name={
+                'Freelancer_Pago': '✅ Freelancer Recebido',
+                'Freelancer_Pendente': '📊 Freelancer Projeção',
+                'CLT': '💼 CLT'
+            }[t.name]))
+            
             st.plotly_chart(fig_mensal, use_container_width=True)
     except Exception as e:
         st.info(f"Não foi possível gerar o gráfico mensal: {e}")
@@ -260,6 +394,22 @@ with abas[1]:
     fig2 = px.pie(df_filtrado, names='Tipo', values='Valor', title='Distribuição da Renda Filtrada')
     st.plotly_chart(fig2, use_container_width=True)
     st.dataframe(df_filtrado)
+
+    # Funcionalidade de exclusão para renda
+    st.subheader("🗑️ Excluir Registro de Renda")
+    if not df_familia.empty:
+        opcoes_exclusao_renda = []
+        for idx, row in df_familia.iterrows():
+            opcoes_exclusao_renda.append(f"{row['Membro']} - {row['Tipo']} - R$ {row['Valor']:.2f} - {row['Data']}")
+        
+        registro_exclusao_renda = st.selectbox("Selecione para excluir:", opcoes_exclusao_renda, key="exclusao_renda")
+        
+        if st.button("🗑️ Excluir Registro de Renda", type="secondary"):
+            idx_excluir = opcoes_exclusao_renda.index(registro_exclusao_renda)
+            df_familia = df_familia.drop(df_familia.index[idx_excluir]).reset_index(drop=True)
+            df_familia.to_csv(renda_path, index=False)
+            st.success("Registro de renda excluído!")
+            st.rerun()
 
     st.subheader("➕ Adicionar nova renda familiar")
     with st.form("form_renda"):
@@ -337,6 +487,22 @@ with abas[2]:
             df_despesas.to_csv(despesas_path, index=False)
             st.success(f"Despesa de {membro_d} adicionada com sucesso!")
 
+    # Funcionalidade de exclusão para despesas
+    st.subheader("🗑️ Excluir Registro de Despesa")
+    if not df_despesas.empty:
+        opcoes_exclusao_despesa = []
+        for idx, row in df_despesas.iterrows():
+            opcoes_exclusao_despesa.append(f"{row['Membro']} - {row['Categoria']} - R$ {row['Valor']:.2f} - {row['Data']}")
+        
+        registro_exclusao_despesa = st.selectbox("Selecione para excluir:", opcoes_exclusao_despesa, key="exclusao_despesa")
+        
+        if st.button("🗑️ Excluir Registro de Despesa", type="secondary"):
+            idx_excluir = opcoes_exclusao_despesa.index(registro_exclusao_despesa)
+            df_despesas = df_despesas.drop(df_despesas.index[idx_excluir]).reset_index(drop=True)
+            df_despesas.to_csv(despesas_path, index=False)
+            st.success("Registro de despesa excluído!")
+            st.rerun()
+
 
 
 # ============================
@@ -383,3 +549,19 @@ with abas[3]:
             df_invest = pd.concat([df_invest, novo_invest], ignore_index=True)
             df_invest.to_csv(invest_path, index=False)
             st.success(f"Investimento de {membro_i} adicionado com sucesso!")
+
+    # Funcionalidade de exclusão para investimentos
+    st.subheader("🗑️ Excluir Registro de Investimento")
+    if not df_invest.empty:
+        opcoes_exclusao_invest = []
+        for idx, row in df_invest.iterrows():
+            opcoes_exclusao_invest.append(f"{row['Membro']} - {row['Tipo']} - R$ {row['Valor']:.2f} - {row['Data']}")
+        
+        registro_exclusao_invest = st.selectbox("Selecione para excluir:", opcoes_exclusao_invest, key="exclusao_invest")
+        
+        if st.button("🗑️ Excluir Registro de Investimento", type="secondary"):
+            idx_excluir = opcoes_exclusao_invest.index(registro_exclusao_invest)
+            df_invest = df_invest.drop(df_invest.index[idx_excluir]).reset_index(drop=True)
+            df_invest.to_csv(invest_path, index=False)
+            st.success("Registro de investimento excluído!")
+            st.rerun()
