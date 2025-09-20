@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 import shutil
 from pathlib import Path
@@ -114,8 +115,18 @@ def processar_dados_emprestimos(df_emprestimos):
     
     # Adicionar colunas calculadas para exibição (sem sobrescrever dados do CSV)
     df_processed['Parcelas_Restantes'] = df_processed['Parcelas_Total'] - df_processed['Parcelas_Pagas']
+    
+    # Proteção contra valores None/NaN na multiplicação
+    df_processed['Valor_Parcela_Mensal'] = df_processed['Valor_Parcela_Mensal'].fillna(0)
     df_processed['Valor_Restante'] = df_processed['Parcelas_Restantes'] * df_processed['Valor_Parcela_Mensal']
-    df_processed['Progresso'] = (df_processed['Parcelas_Pagas'] / df_processed['Parcelas_Total'] * 100).round(1)
+    
+    # Proteção contra divisão por zero
+    with np.errstate(divide='ignore', invalid='ignore'):
+        df_processed['Progresso'] = np.where(
+            df_processed['Parcelas_Total'] > 0,
+            (df_processed['Parcelas_Pagas'] / df_processed['Parcelas_Total'] * 100).round(1),
+            0
+        )
     
     return df_processed
 
@@ -1076,7 +1087,9 @@ with abas[4]:
         for _, row in df_emprestimos.iterrows():
             if row['Status'] == 'Ativo':
                 parcelas_restantes = row['Parcelas_Total'] - row['Parcelas_Pagas']
-                valor_restante = parcelas_restantes * row['Valor_Parcela_Mensal']
+                # Proteção contra valores None/NaN
+                valor_parcela = row['Valor_Parcela_Mensal'] if pd.notna(row['Valor_Parcela_Mensal']) else 0
+                valor_restante = parcelas_restantes * valor_parcela
                 
                 if row['Tipo'] == 'Emprestado':
                     pendentes_receber += valor_restante
@@ -1421,7 +1434,9 @@ with abas[4]:
                         
                         # Calcular parcelas restantes
                         parcelas_restantes = row_atual['Parcelas_Total'] - row_atual['Parcelas_Pagas']
-                        valor_restante = parcelas_restantes * row_atual['Valor_Parcela_Mensal']
+                        # Proteção contra valores None/NaN
+                        valor_parcela = row_atual['Valor_Parcela_Mensal'] if pd.notna(row_atual['Valor_Parcela_Mensal']) else 0
+                        valor_restante = parcelas_restantes * valor_parcela
                         
                         # Quitar totalmente
                         df_emprestimos.loc[idx_quitar, 'Parcelas_Pagas'] = row_atual['Parcelas_Total']
