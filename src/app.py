@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
+# Configurar pandas para evitar warnings de depreciação
+pd.set_option('future.no_silent_downcasting', True)
+
 # Inicializar session state
 if 'refresh_data' not in st.session_state:
     st.session_state.refresh_data = False
@@ -476,10 +479,10 @@ with abas[1]:
             resumo_clt = pd.DataFrame(columns=['MesAno', 'CLT'])
         # Merge
         # Primeiro merge dos dados de freelancer
-        resumo_freelancer = pd.merge(resumo_freela_pago, resumo_freela_pendente, on='MesAno', how='outer').fillna(0)
+        resumo_freelancer = pd.merge(resumo_freela_pago, resumo_freela_pendente, on='MesAno', how='outer').fillna(0).infer_objects(copy=False)
         
         # Depois merge com CLT
-        resumo = pd.merge(resumo_freelancer, resumo_clt, on='MesAno', how='outer').fillna(0)
+        resumo = pd.merge(resumo_freelancer, resumo_clt, on='MesAno', how='outer').fillna(0).infer_objects(copy=False)
         resumo = resumo.sort_values('MesAno')
         if not resumo.empty:
             fig_mensal = px.bar(resumo, x='MesAno', y=['Freelancer_Pago', 'Freelancer_Pendente', 'CLT'], barmode='group',
