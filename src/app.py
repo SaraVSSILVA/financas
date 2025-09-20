@@ -379,16 +379,66 @@ with abas[0]:
             "Valor": [salario, vale]
         })
         st.dataframe(ganhos_clt)
+        
+        # Botão para registrar os ganhos CLT na renda familiar
+        if st.button("💼 Registrar Ganhos CLT na Renda Familiar", key="btn_registrar_clt"):
+            df_familia = load_csv_data(renda_path)
+            
+            # Mapeamento de mês
+            meses_map = {
+                "Janeiro": "01", "Fevereiro": "02", "Março": "03", "Abril": "04",
+                "Maio": "05", "Junho": "06", "Julho": "07", "Agosto": "08", 
+                "Setembro": "09", "Outubro": "10", "Novembro": "11", "Dezembro": "12"
+            }
+            
+            mes_num = meses_map[mes]
+            data_salario = f"{ano}-{mes_num}-05"
+            data_vale = f"{ano}-{mes_num}-20"
+            
+            # Verificar se já existem registros CLT para este mês/ano
+            df_familia['Data'] = pd.to_datetime(df_familia['Data'], errors='coerce')
+            ja_existe_salario = any(
+                (df_familia['Data'].dt.year == ano) & 
+                (df_familia['Data'].dt.month == int(mes_num)) & 
+                (df_familia['Tipo'].str.lower() == 'salário')
+            )
+            ja_existe_vale = any(
+                (df_familia['Data'].dt.year == ano) & 
+                (df_familia['Data'].dt.month == int(mes_num)) & 
+                (df_familia['Tipo'].str.lower() == 'vale')
+            )
+            
+            if ja_existe_salario or ja_existe_vale:
+                st.warning(f"⚠️ Já existem registros CLT para {mes}/{ano}. Verifique na aba Renda.")
+            else:
+                # Adicionar registros CLT
+                novos_registros = pd.DataFrame({
+                    "Membro": ["Sara", "Sara"],
+                    "Tipo": ["Salário", "Vale"],
+                    "Valor": [salario, vale],
+                    "Data": [data_salario, data_vale]
+                })
+                
+                df_familia = pd.concat([df_familia, novos_registros], ignore_index=True)
+                df_familia.to_csv(renda_path, index=False)
+                st.success(f"✅ Ganhos CLT de {mes}/{ano} registrados na renda familiar!")
+            
+        st.info("💡 **Dica**: Clique no botão acima para incluir automaticamente o salário e vale na Renda Familiar.")
 
  # ============================
  # Aba 2 – Renda Familiar
  # ============================
 with abas[1]:
     st.header(" Renda Familiar")
-    df_familia = pd.read_csv(renda_path)
+    df_familia = load_csv_data(renda_path)
+    
+    # Separar valores CLT (já recebidos) dos outros
+    valores_clt = df_familia[df_familia['Tipo'].str.lower().isin(['salário', 'salario', 'vale'])]['Valor'].sum()
+    valores_outros = df_familia[~df_familia['Tipo'].str.lower().isin(['salário', 'salario', 'vale'])]['Valor'].sum()
+    
     # Ganhos freelancer automatizados
     try:
-        df_horas = pd.read_csv('data/horas.csv')
+        df_horas = load_csv_data('data/horas.csv')
         # Garantir que a coluna 'Pago' existe
         if 'Pago' not in df_horas.columns:
             df_horas['Pago'] = False
@@ -406,20 +456,24 @@ with abas[1]:
         total_freela_pendente = 0
         total_freela = 0
     
-    renda_total_efetiva = df_familia['Valor'].sum() + total_freela_pago  # Apenas valores pagos
-    renda_total_projetada = renda_total_efetiva + total_freela_pendente  # Incluindo projeções
+    # Calcular renda total (CLT + Outros + Freelancer)
+    renda_total_efetiva = valores_clt + valores_outros + total_freela_pago  # CLT sempre efetivo + outros + freelancer pago
+    renda_total_projetada = renda_total_efetiva + total_freela_pendente  # Incluindo projeções freelancer
     
     st.metric("💰 Renda Familiar Efetiva", f"R$ {renda_total_efetiva:,.2f}")
     st.metric("📈 Renda Familiar Projetada", f"R$ {renda_total_projetada:,.2f}", 
               delta=f"+R$ {total_freela_pendente:,.2f} (pendente)")
     
-    col1, col2, col3 = st.columns(3)
+    # Breakdown detalhado
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("✅ Freelancer Recebido", f"R$ {total_freela_pago:,.2f}")
+        st.metric("💼 CLT (Efetivo)", f"R$ {valores_clt:,.2f}")
     with col2:
-        st.metric("📊 Freelancer Projeção", f"R$ {total_freela_pendente:,.2f}")
+        st.metric("🏠 Outras Rendas", f"R$ {valores_outros:,.2f}")
     with col3:
-        st.metric("🎯 Total Freelancer", f"R$ {total_freela:,.2f}")
+        st.metric("✅ Freelancer Recebido", f"R$ {total_freela_pago:,.2f}")
+    with col4:
+        st.metric("📊 Freelancer Projeção", f"R$ {total_freela_pendente:,.2f}")
 
     st.subheader("🔍 Filtros")
     membros = st.multiselect("Filtrar por membro", options=df_familia['Membro'].unique())
@@ -441,10 +495,22 @@ with abas[1]:
     if meses:
         df_filtrado['Mes'] = df_filtrado['Data'].apply(lambda x: pd.to_datetime(x).strftime('%Y-%m'))
         df_filtrado = df_filtrado[df_filtrado['Mes'].isin(meses)]
-    renda_total_filtrada = df_filtrado['Valor'].sum() + total_freela_pago  # Apenas valores pagos
+    
+    # Separar valores filtrados
+    valores_clt_filtrados = df_filtrado[df_filtrado['Tipo'].str.lower().isin(['salário', 'salario', 'vale'])]['Valor'].sum()
+    valores_outros_filtrados = df_filtrado[~df_filtrado['Tipo'].str.lower().isin(['salário', 'salario', 'vale'])]['Valor'].sum()
+    renda_total_filtrada = valores_clt_filtrados + valores_outros_filtrados + total_freela_pago
 
-    st.metric("Renda Familiar Filtrada (Efetiva)", f"R$ {renda_total_filtrada:,.2f}")
-    st.caption(f"Inclui apenas ganhos freelancer pagos: R$ {total_freela_pago:,.2f}")
+    st.metric("💰 Renda Família Filtrada (Efetiva)", f"R$ {renda_total_filtrada:,.2f}")
+    
+    # Breakdown do filtro
+    col_f1, col_f2, col_f3 = st.columns(3)
+    with col_f1:
+        st.caption(f"💼 CLT Filtrado: R$ {valores_clt_filtrados:,.2f}")
+    with col_f2:
+        st.caption(f"🏠 Outras Rendas: R$ {valores_outros_filtrados:,.2f}")
+    with col_f3:
+        st.caption(f"✅ Freelancer Pago: R$ {total_freela_pago:,.2f}")
 
     # Gráfico resumo mensal Freelancer e CLT
     try:
