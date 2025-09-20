@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import shutil
+from pathlib import Path
 
 # Configurar pandas para evitar warnings de depreciação
 pd.set_option('future.no_silent_downcasting', True)
@@ -9,41 +11,115 @@ pd.set_option('future.no_silent_downcasting', True)
 if 'refresh_data' not in st.session_state:
     st.session_state.refresh_data = False
 
+# Função para criar backup antes de modificações
+def criar_backup():
+    """Cria backup dos arquivos CSV antes de modificações"""
+    try:
+        backup_dir = Path("data/backups")
+        backup_dir.mkdir(exist_ok=True)
+        
+        timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+        arquivos_backup = []
+        
+        for arquivo in ["horas.csv", "familia.csv", "despesas.csv", "investimentos.csv", "emprestimos.csv"]:
+            arquivo_path = Path(f"data/{arquivo}")
+            if arquivo_path.exists():
+                backup_path = backup_dir / f"{arquivo.replace('.csv', '')}_{timestamp}.csv"
+                shutil.copy2(arquivo_path, backup_path)
+                arquivos_backup.append(arquivo)
+        
+        if arquivos_backup:
+            st.info(f"✅ Backup criado para: {', '.join(arquivos_backup)}")
+        return True
+    except Exception as e:
+        st.error(f"❌ Erro ao criar backup: {e}")
+        return False
+
 # Função para carregar dados sem cache agressivo
 def load_csv_data(file_path, default_columns=None):
     try:
-        return pd.read_csv(file_path)
-    except FileNotFoundError:
-        # Retornar DataFrame vazio se arquivo não existir
-        if default_columns:
-            return pd.DataFrame(columns=default_columns)
-        elif 'horas' in file_path:
-            return pd.DataFrame(columns=['Data', 'Horas', 'Cotacao', 'Semana', 'Nota', 'Valor_USD', 'Valor_BRL', 'Valor_Ajustado_USD', 'Valor_Ajustado_BRL', 'Pago'])
-        elif 'familia' in file_path:
-            return pd.DataFrame(columns=['Membro', 'Tipo', 'Valor', 'Data'])
-        elif 'despesas' in file_path:
-            return pd.DataFrame(columns=['Membro', 'Categoria', 'Valor', 'Data'])
-        elif 'investimentos' in file_path:
-            return pd.DataFrame(columns=['Membro', 'Tipo', 'Valor', 'Data', 'Rendimento'])
-        elif 'emprestimos' in file_path:
-            return pd.DataFrame(columns=['Nome', 'Tipo', 'Valor_Original', 'Valor_Com_Juros', 'Parcelas_Total', 'Parcelas_Pagas', 'Valor_Parcela', 'Data_Emprestimo', 'Status', 'Observacoes'])
-    except Exception:
-        return pd.DataFrame()
+        if Path(file_path).exists():
+            df = pd.read_csv(file_path)
+            
+            # Verificação de integridade
+            if df.empty and default_columns:
+                st.warning(f"⚠️ Arquivo {file_path} estava vazio, recriando estrutura padrão.")
+                df = pd.DataFrame(columns=default_columns)
+                df.to_csv(file_path, index=False)
+            
+            # Verificar se as colunas estão corretas
+            if default_columns and not df.empty:
+                colunas_faltantes = set(default_columns) - set(df.columns)
+                if colunas_faltantes:
+                    st.warning(f"⚠️ Colunas faltantes em {file_path}: {colunas_faltantes}")
+                    for col in colunas_faltantes:
+                        df[col] = None
+                    df.to_csv(file_path, index=False)
+            
+            return df
+        else:
+            # Criar arquivo se não existir
+            columns = default_columns or get_default_columns(file_path)
+            df = pd.DataFrame(columns=columns)
+            Path(file_path).parent.mkdir(parents=True, exist_ok=True)
+            df.to_csv(file_path, index=False)
+            st.info(f"📄 Arquivo {file_path} criado com estrutura padrão.")
+            return df
+            
+    except Exception as e:
+        st.error(f"❌ Erro ao carregar {file_path}: {e}")
+        columns = default_columns or get_default_columns(file_path)
+        return pd.DataFrame(columns=columns)
 
-# Função para salvar dados com verificação
+def get_default_columns(file_path):
+    """Retorna colunas padrão baseadas no nome do arquivo"""
+    if 'horas' in file_path:
+        return ['Data', 'Horas', 'Cotacao', 'Semana', 'Nota', 'Valor_USD', 'Valor_BRL', 'Valor_Ajustado_USD', 'Valor_Ajustado_BRL', 'Pago']
+    elif 'familia' in file_path:
+        return ['Membro', 'Tipo', 'Valor', 'Data']
+    elif 'despesas' in file_path:
+        return ['Membro', 'Categoria', 'Valor', 'Data']
+    elif 'investimentos' in file_path:
+        return ['Membro', 'Tipo', 'Valor', 'Data', 'Rendimento']
+    elif 'emprestimos' in file_path:
+        return ['Nome', 'Tipo', 'Valor_Original', 'Valor_Com_Juros', 'Parcelas_Total', 'Parcelas_Pagas', 'Valor_Parcela', 'Data_Emprestimo', 'Status', 'Observacoes']
+    else:
+        return []
+
+# Função para salvar dados com verificação e backup
 def save_csv_data(df, file_path, success_message="Dados salvos com sucesso!"):
     try:
+        # Criar backup do arquivo atual se existir
+        file_path_obj = Path(file_path)
+        if file_path_obj.exists():
+            backup_temp = file_path.replace('.csv', '_temp_backup.csv')
+            shutil.copy2(file_path, backup_temp)
+        
+        # Salvar novos dados
         df.to_csv(file_path, index=False)
+        
         # Verificar se foi salvo corretamente
         verificacao = pd.read_csv(file_path)
-        if len(verificacao) == len(df):
+        if len(verificacao) == len(df) and not verificacao.empty:
+            # Remover backup temporário se salvamento foi bem-sucedido
+            backup_temp = file_path.replace('.csv', '_temp_backup.csv')
+            if Path(backup_temp).exists():
+                Path(backup_temp).unlink()
             st.success(success_message)
             return True
         else:
-            st.error("❌ Erro ao salvar: dados não foram gravados corretamente!")
-            return False
+            raise Exception("Verificação de integridade falhou")
+            
     except Exception as e:
         st.error(f"❌ Erro ao salvar dados: {str(e)}")
+        
+        # Restaurar backup se algo deu errado
+        backup_temp = file_path.replace('.csv', '_temp_backup.csv')
+        if Path(backup_temp).exists():
+            shutil.copy2(backup_temp, file_path)
+            Path(backup_temp).unlink()
+            st.warning("⚠️ Dados restaurados do backup devido ao erro")
+        
         return False
 
 st.set_page_config(page_title="Dashboard Financeiro", layout="wide")
@@ -130,13 +206,73 @@ emprestimos_path = 'data/emprestimos.csv'
 # ============================
 # Título e Controles
 # ============================
-col_title, col_refresh = st.columns([4, 1])
+col_title, col_backup, col_refresh = st.columns([3, 1, 1])
 with col_title:
     st.title("Registro Financeiro")
+with col_backup:
+    if st.button("💾 Backup", help="Criar backup dos dados"):
+        if criar_backup():
+            st.balloons()
 with col_refresh:
-    if st.button("🔄 Atualizar Dados", help="Clique para atualizar os dados exibidos"):
+    if st.button("🔄 Atualizar", help="Atualizar dados exibidos"):
         st.session_state.refresh_data = True
         st.success("Dados atualizados! ✅")
+
+# Informações de backup e exportação
+backup_dir = Path("data/backups")
+if backup_dir.exists():
+    backups = list(backup_dir.glob("*.csv"))
+    if backups:
+        with st.expander("📋 Gerenciamento de Backup e Dados"):
+            col_info, col_export = st.columns(2)
+            
+            with col_info:
+                st.info(f"💾 **{len(backups)} backups disponíveis** na pasta `data/backups/`")
+                st.write("📌 **Dica**: Os backups são criados automaticamente a cada modificação.")
+                
+                # Mostrar últimos 3 backups
+                backups_recentes = sorted(backups, key=lambda x: x.stat().st_mtime, reverse=True)[:3]
+                for backup in backups_recentes:
+                    timestamp = pd.Timestamp.fromtimestamp(backup.stat().st_mtime)
+                    st.text(f"📄 {backup.name} - {timestamp.strftime('%d/%m/%Y %H:%M')}")
+            
+            with col_export:
+                st.write("**📤 Exportar Dados Completos**")
+                
+                if st.button("📦 Exportar Todos os Dados"):
+                    try:
+                        # Criar ZIP com todos os dados
+                        import zipfile
+                        timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+                        zip_name = f"dados_completos_{timestamp}.zip"
+                        
+                        with zipfile.ZipFile(zip_name, 'w') as zipf:
+                            for arquivo in ["horas.csv", "familia.csv", "despesas.csv", "investimentos.csv", "emprestimos.csv"]:
+                                arquivo_path = f"data/{arquivo}"
+                                if Path(arquivo_path).exists():
+                                    zipf.write(arquivo_path, arquivo)
+                        
+                        with open(zip_name, "rb") as file:
+                            st.download_button(
+                                label="⬇️ Baixar Dados Exportados",
+                                data=file.read(),
+                                file_name=zip_name,
+                                mime="application/zip"
+                            )
+                        
+                        # Remover arquivo temporário
+                        Path(zip_name).unlink()
+                        
+                    except Exception as e:
+                        st.error(f"❌ Erro ao exportar dados: {e}")
+                
+                st.write("**📥 Restaurar Dados**")
+                st.info("⚠️ Para restaurar dados, substitua manualmente os arquivos CSV na pasta `data/`")
+else:
+    with st.expander("📋 Gerenciamento de Backup"):
+        st.info("💡 Crie seu primeiro backup clicando no botão 'Backup' acima.")
+    
+st.divider()
 
 # ============================
 # Abas do Dashboard
