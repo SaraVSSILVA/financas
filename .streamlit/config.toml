@@ -1,0 +1,9 @@
+[theme]
+primaryColor = "#1DE9B6"         # Turquesa
+backgroundColor = "#181C2F"      # Azul marinho escuro
+secondaryBackgroundColor = "#23272F" # Grafite
+textColor = "#E0F7FA"            # Azul claro
+font = "sans serif"
+
+[server]
+headless = true
