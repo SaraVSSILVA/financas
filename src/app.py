@@ -86,6 +86,17 @@ def get_default_columns(file_path):
     else:
         return []
 
+def safe_concat(df1, df2):
+    """Concatenação segura que evita warnings com DataFrames vazios"""
+    if df1.empty and df2.empty:
+        return df1
+    elif df1.empty:
+        return df2.copy()
+    elif df2.empty:
+        return df1.copy()
+    else:
+        return pd.concat([df1, df2], ignore_index=True)
+
 # Função para salvar dados com verificação e backup
 def save_csv_data(df, file_path, success_message="Dados salvos com sucesso!"):
     try:
@@ -320,7 +331,7 @@ with abas[0]:
                     "Valor_Ajustado_BRL": [valor_ajustado_brl],
                     "Pago": [False]
                 })
-                df_horas = pd.concat([df_horas, novo], ignore_index=True)
+                df_horas = safe_concat(df_horas, novo)
                 save_csv_data(df_horas, 'data/horas.csv', "✅ Ganho registrado e salvo!")
         
         if not df_horas.empty and 'Valor_Ajustado_BRL' in df_horas.columns:
@@ -353,14 +364,14 @@ with abas[0]:
             fig_barras = px.bar(resumo, x='Semana', y='Total_Ajustado_BRL', color='Total_Ajustado_BRL',
                                color_continuous_scale='turbo',
                                title='Ganhos Semanais Ajustados por Qualidade (BRL)', text_auto=True)
-            st.plotly_chart(fig_barras, use_container_width=True)
+            st.plotly_chart(fig_barras, width='stretch')
             # Gráfico de linha: evolução da qualidade
             st.subheader(" Evolução da Qualidade (Nota Média)")
             media_nota = df_horas.groupby('Semana')['Nota'].mean().reset_index()
             fig_qualidade = px.line(media_nota, x='Semana', y='Nota', markers=True,
                                     title='Média das Notas por Semana')
             fig_qualidade.update_traces(line_color='#1DE9B6', marker_color='#1DE9B6')
-            st.plotly_chart(fig_qualidade, use_container_width=True)
+            st.plotly_chart(fig_qualidade, width='stretch')
             # Formatação condicional
             st.subheader("Resumo Semanal")
             # Formatação condicional - usar valor ajustado para destacar maior ganho
@@ -565,7 +576,7 @@ with abas[0]:
                     "Data": [data_salario, data_vale]
                 })
                 
-                df_familia = pd.concat([df_familia, novos_registros], ignore_index=True)
+                df_familia = safe_concat(df_familia, novos_registros)
                 save_csv_data(df_familia, renda_path, f"✅ Ganhos CLT de {mes}/{ano} registrados na renda familiar e salvos!")
             
         st.info("💡 **Dica**: Clique no botão acima para incluir automaticamente o salário e vale na Renda Familiar.")
@@ -745,12 +756,12 @@ with abas[1]:
                 'CLT': '💼 CLT'
             }[t.name]))
             
-            st.plotly_chart(fig_mensal, use_container_width=True)
+            st.plotly_chart(fig_mensal, width='stretch')
     except Exception as e:
         st.info(f"Não foi possível gerar o gráfico mensal: {e}")
 
     fig2 = px.pie(df_filtrado, names='Tipo', values='Valor', title='Distribuição da Renda Filtrada')
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width='stretch')
     st.dataframe(df_filtrado)
 
     # Funcionalidade de exclusão para renda
@@ -783,7 +794,7 @@ with abas[1]:
                 "Valor": [valor],
                 "Data": [data]
             })
-            df_familia = pd.concat([df_familia, novo_dado], ignore_index=True)
+            df_familia = safe_concat(df_familia, novo_dado)
             save_csv_data(df_familia, renda_path, f"✅ Renda de {membro} adicionada e salva com sucesso!")
 
 
@@ -810,7 +821,7 @@ with abas[2]:
     st.subheader("Resumo Geral por Categoria")
     resumo_cat = df_despesas_filtrado.groupby('Categoria')['Valor'].sum().reset_index().sort_values('Valor', ascending=False)
     fig_cat = px.pie(resumo_cat, names='Categoria', values='Valor', title='Despesas por Categoria')
-    st.plotly_chart(fig_cat, use_container_width=True)
+    st.plotly_chart(fig_cat, width='stretch')
     st.dataframe(resumo_cat)
 
     # Detalhamento por membro
@@ -822,7 +833,7 @@ with abas[2]:
         st.dataframe(pivot.style.format("R$ {:.2f}"))
         fig_membro = px.bar(resumo_membro, x='Categoria', y='Valor', color='Membro', barmode='group',
                             title='Despesas por Categoria e Membro')
-        st.plotly_chart(fig_membro, use_container_width=True)
+        st.plotly_chart(fig_membro, width='stretch')
     else:
         st.info("Nenhuma despesa registrada para Adhara, Breno ou Sara.")
 
@@ -840,7 +851,7 @@ with abas[2]:
                 "Valor": [valor_d],
                 "Data": [data_d]
             })
-            df_despesas = pd.concat([df_despesas, nova_despesa], ignore_index=True)
+            df_despesas = safe_concat(df_despesas, nova_despesa)
             save_csv_data(df_despesas, despesas_path, f"✅ Despesa de {membro_d} adicionada e salva com sucesso!")
 
     # Funcionalidade de exclusão para despesas
@@ -881,7 +892,7 @@ with abas[3]:
     if not df_invest_filtrado.empty:
         fig4 = px.bar(df_invest_filtrado, x='Tipo', y='Valor', color='Membro',
                       title='Investimentos por Tipo e Membro', text_auto=True)
-        st.plotly_chart(fig4, use_container_width=True)
+        st.plotly_chart(fig4, width='stretch')
     st.subheader(" Detalhamento dos Investimentos")
     st.dataframe(df_invest_filtrado)
     st.subheader("➕ Adicionar novo investimento")
@@ -900,7 +911,7 @@ with abas[3]:
                 "Data": [data_i],
                 "Rendimento": [rendimento_i]
             })
-            df_invest = pd.concat([df_invest, novo_invest], ignore_index=True)
+            df_invest = safe_concat(df_invest, novo_invest)
             save_csv_data(df_invest, invest_path, f"✅ Investimento de {membro_i} adicionado e salvo com sucesso!")
 
     # Funcionalidade de exclusão para investimentos
@@ -939,7 +950,7 @@ with abas[4]:
             'Data': [data]
         })
         
-        df_familia = pd.concat([df_familia, novo_registro], ignore_index=True)
+        df_familia = safe_concat(df_familia, novo_registro)
         save_csv_data(df_familia, renda_path, f"✅ {tipo_transacao} registrado na renda familiar!")
     
     # Métricas gerais
@@ -1012,7 +1023,7 @@ with abas[4]:
             'Valor_Parcela': 'R$ {:.2f}',
             'Valor_Restante': 'R$ {:.2f}',
             'Progresso': '{:.1f}%'
-        }), use_container_width=True)
+        }), width='stretch')
         
         # Gráficos de acompanhamento
         col_g1, col_g2 = st.columns(2)
@@ -1028,7 +1039,7 @@ with abas[4]:
                     labels={'value': 'Parcelas', 'variable': 'Status'},
                     color_discrete_map={'Parcelas_Pagas': '#1DE9B6', 'Parcelas_Restantes': '#FFA726'}
                 )
-                st.plotly_chart(fig_progresso, use_container_width=True)
+                st.plotly_chart(fig_progresso, width='stretch')
         
         with col_g2:
             # Gráfico de valores por tipo
@@ -1046,7 +1057,7 @@ with abas[4]:
                     labels={'value': 'Valor (R$)', 'variable': 'Tipo de Valor'},
                     color_discrete_map={'Valor_Original': '#2196F3', 'Valor_Com_Juros': '#FF5722'}
                 )
-                st.plotly_chart(fig_valores, use_container_width=True)
+                st.plotly_chart(fig_valores, width='stretch')
         
         # Gráficos
         col_g1, col_g2 = st.columns(2)
@@ -1098,7 +1109,7 @@ with abas[4]:
                 "Observacoes": [observacoes_emp]
             })
             
-            df_emprestimos = pd.concat([df_emprestimos, novo_emprestimo], ignore_index=True)
+            df_emprestimos = safe_concat(df_emprestimos, novo_emprestimo)
             save_csv_data(df_emprestimos, emprestimos_path, f"✅ Empréstimo {tipo_emp.lower()} para/de {nome_emp} registrado e salvo!")
             
             # Se é empréstimo recebido, adicionar na renda familiar
